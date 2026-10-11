@@ -193,9 +193,10 @@ docs/v3-squeeze/S-17-razor-ff.md: names `tools/check_no_star.sh`, which does not
 docs/v3-squeeze/S-19-dual-mac-pe.md: names `check_no_star.sh`, which does not exist
 docs/v3-squeeze/S-20-multi-vt-cells.md: names `check_no_star.sh`, which does not exist
 research/ARXIV_BODY_FIXES_READY_TO_PASTE.md: names `main_ru.tex`, which does not exist
-research/ARXIV_GFT16_SNIPPET.md: names `ARXIV_GFT16_v2.md`, which does not exist
 research/ARXIV_GFT16_SNIPPET.md: names `conformance/gft16_ref.py`, which does not exist
 research/ARXIV_GFT16_SNIPPET.md: names `gft16_ref.py`, which does not exist
+research/ARXIV_GFT16_v2.md: names `trinity-fpga/build/gft_mul8/gft_mul.v`, which does not exist
+research/ARXIV_GFT16_v2.md: names `trinity-fpga/conformance/gft16_ref.py`, which does not exist
 research/ARXIV_V2_CORRECTION_PACKAGE.md: names `ARXIV_UPLOAD_EN_v2.md`, which does not exist
 research/ARXIV_V2_CORRECTION_PACKAGE.md: names `main_ru.tex`, which does not exist
 research/ARXIV_V2_CORRECTION_PACKAGE.md: names `paper1-goldenfloat/main_ru.tex`, which does not exist
@@ -203,6 +204,9 @@ research/CITED_NUMBERS_2026-08-20.md: names `gf_paper/src/main.tex`, which does 
 research/CITED_NUMBERS_2026-08-20.md: names `takum_src/extracted/hunhold-beating_posits_at_their_own_game.tex`, which does not exist
 research/DIV_SQRT_HONESTY.md: names `gf_div_ref_tb.v`, which does not exist
 research/DIV_SQRT_HONESTY.md: names `verify_div_rtl.py`, which does not exist
+research/GFT_DEFECTS_2026-08-08.md: names `gft_ref.py`, which does not exist
+research/GF_INVENTORY_2026-08-08.md: names `gft16_ref.py`, which does not exist
+research/GF_INVENTORY_2026-08-08.md: names `gft_ref.py`, which does not exist
 research/GF_T_GOLD_STANDARD_LADDER_2026-08-05.md: names `conformance/gft16_ref.py`, which does not exist
 research/GF_T_GOLD_STANDARD_LADDER_2026-08-05.md: names `conformance/gft_ref.py`, which does not exist
 research/LITERATURE_SCAN_2024_2026.md: names `synth.sh`, which does not exist
@@ -217,10 +221,10 @@ research/SUBMISSION_CHECKLIST.md: names `main_ru.tex`, which does not exist
 research/SUBMISSION_CHECKLIST.md: names `trinity-papers-ru/paper1-goldenfloat/main_ru.tex`, which does not exist
 research/SUBMISSION_PACKAGE_2026-08-05.md: names `conformance/gft16_ref.py`, which does not exist
 research/SUBMISSION_PACKAGE_2026-08-05.md: names `paper3-methodology/main.tex`, which does not exist
-research/THREE_PAPER_UPDATE_2026-08-08.md: names `gft_paper.tex`, which does not exist
 research/THREE_PAPER_UPDATE_2026-08-08.md: names `gft_ref.py`, which does not exist
 research/WITNESS_RECORDS_READY_TO_PASTE.md: names `fpga/openxc7-synth/bcd_decode.v`, which does not exist
 research/XC7A200T_GF16_DATAPOINT_2026-08-05.md: names `trinity-papers-ru/paper1-goldenfloat/main_ru.tex`, which does not exist
+research/arxiv_gft/README.md: names `conformance/gft16_ref.py`, which does not exist
 research/arxiv_submission/submission_checklist.md: names `_sub.json`, which does not exist
 research/arxiv_submission/submission_checklist.md: names `docs/migration-map.md`, which does not exist
 research/arxiv_v3_catalog_update.md: names `_add.json`, which does not exist

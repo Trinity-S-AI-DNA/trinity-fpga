@@ -1,0 +1,146 @@
+name: Build Matrix (consolidated openXC7)
+
+# Single consolidated workflow that replaces the per-design permutation
+# workflows (ax7203-corona-compute-* / ax7203-corona-decode-*).
+# Build target is derived from `format` + `op` + `type`:
+#   compute -> corona_compute_${format}_${op}_ax7203
+#   decode  -> corona_decode_${format}_ax7203
+# The Docker pipeline is identical to build-ax7203-bitstream.yml
+# (yosys -> nextpnr -> fasm2frames -> xc7frames2bit).
+
+on:
+  workflow_dispatch:
+    inputs:
+      format:
+        description: 'Numeric format (e.g. gf4, fp32, posit8, bf16)'
+        required: true
+        default: 'gf4'
+      op:
+        description: 'Operation for compute (add|mul|fma|alu|cmp|to-fp32|...). Ignored for decode.'
+        required: false
+        default: 'add'
+      type:
+        description: 'Design type'
+        type: choice
+        options:
+          - compute
+          - decode
+        required: true
+        default: 'compute'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Resolve design name
+        id: design
+        run: |
+          FMT="${{ github.event.inputs.format }}"
+          OP="${{ github.event.inputs.op }}"
+          TYPE="${{ github.event.inputs.type }}"
+          if [ "$TYPE" = "compute" ]; then
+            DESIGN="corona_compute_${FMT}_${OP}_ax7203"
+          else
+            DESIGN="corona_decode_${FMT}_ax7203"
+          fi
+          echo "design=$DESIGN" >> "$GITHUB_OUTPUT"
+          echo "format=$FMT"     >> "$GITHUB_OUTPUT"
+          echo "type=$TYPE"      >> "$GITHUB_OUTPUT"
+          echo "Resolved design: $DESIGN (type=$TYPE)"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Generate chipdb cache
+        id: chipdb
+        uses: actions/cache@v4
+        with:
+          path: chipdb-xc7a200tfbg484-2.bin
+          key: chipdb-xc7a200tfbg484-2-v2
+
+      - name: Build chipdb (if not cached)
+        if: steps.chipdb.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm -v "$(pwd):/github" regymm/openxc7:latest bash -c '
+          cd /nextpnr-xilinx/xilinx &&
+          python3 python/bbaexport.py \
+            --xray /nextpnr-xilinx/xilinx/external/prjxray-db/artix7 \
+            --metadata /nextpnr-xilinx/xilinx/external/nextpnr-xilinx-meta/artix7 \
+            --device xc7a200tfbg484-2 \
+            --constids /nextpnr-xilinx/xilinx/constids.inc \
+            --bba /tmp/chipdb.bba &&
+          bbasm --le /tmp/chipdb.bba /github/chipdb-xc7a200tfbg484-2.bin'
+
+      - name: Full bitstream build
+        run: |
+          DESIGN="${{ steps.design.outputs.design }}"
+          FMT="${{ steps.design.outputs.format }}"
+          TYPE="${{ steps.design.outputs.type }}"
+          echo "Building $DESIGN..."
+          docker run --rm \
+            -v "$(pwd):/github" \
+            -e DESIGN="$DESIGN" \
+            -e FMT="$FMT" \
+            -e TYPE="$TYPE" \
+            regymm/openxc7:latest bash -c '
+            cd /github/fpga/openxc7-synth
+            # Source files differ by type:
+            #   compute -> param adders/mulers + the design
+            #   decode  -> the design + format-specific decode module under external/
+            if [ "$TYPE" = "decode" ]; then
+              READS="corona_decode_${FMT}_ax7203.v /github/external/tt-trinity-corona/src/rtl/${FMT}_decode.v"
+            else
+              READS="gf_adder_param.v gf_mul_param.v gf_div_param.v gf_quire_param.v gf_sqrt_param.v gf16_plus_mac.v ${DESIGN}.v"
+            fi
+            # Synthesis flags: -abc9 is REQUIRED (Wave 3: removal = 70%→19% regression)
+            # -nocarry: carry chains break routing on this part
+            # -nodsp: for MUL designs (DSP48E1 partial in openXC7); ADD doesn't need it
+            if [ "$OP" = "mul" ]; then
+              SYNTH_FLAGS="-flatten -abc9 -nocarry -nodsp -arch xc7"
+            else
+              SYNTH_FLAGS="-flatten -abc9 -nocarry -arch xc7"
+            fi
+            echo "=== Step 1: Yosys ==="
+            yosys -p "read_verilog $READS; synth_xilinx $SYNTH_FLAGS; write_json ${DESIGN}.json" || exit 1
+            echo "=== Step 2: nextpnr ==="
+            cp /github/chipdb-xc7a200tfbg484-2.bin /chipdb/xc7a200tfbg484-2.bin
+            nextpnr-xilinx --chipdb /chipdb/xc7a200tfbg484-2.bin \
+              --json ${DESIGN}.json \
+              --xdc ax7203_corona.xdc \
+              --fasm ${DESIGN}.fasm \
+              --router router1 \
+              --timing-allow-fail \
+              --freq 10.0 || exit 1
+            echo "FASM lines: $(wc -l < ${DESIGN}.fasm)"
+            echo "=== Step 3: fasm2frames ==="
+            /prjxray/env/bin/fasm2frames \
+              --db-root /nextpnr-xilinx/xilinx/external/prjxray-db/artix7 \
+              --part xc7a200tfbg484-2 \
+              ${DESIGN}.fasm ${DESIGN}.frames 2>/dev/null
+            echo "fasm2frames done, frames lines: $(wc -l < ${DESIGN}.frames)"
+            [ -s ${DESIGN}.frames ] || exit 1
+            echo "=== Step 4: xc7frames2bit ==="
+            xc7frames2bit \
+              --part_file /nextpnr-xilinx/xilinx/external/prjxray-db/artix7/xc7a200tfbg484-2/part.yaml \
+              --frm_file ${DESIGN}.frames \
+              --output_file ${DESIGN}.bit
+            echo "xc7frames2bit rc=$?"
+            ls -la ${DESIGN}.bit || exit 1
+            echo "=== BITSTREAM DONE ==="
+            '
+
+      - name: Upload FASM + JSON (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.design.outputs.design }}_debug
+          path: |
+            fpga/openxc7-synth/*.fasm
+            fpga/openxc7-synth/*.json
+
+      - name: Upload bitstream
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.design.outputs.design }}_bitstream
+          path: fpga/openxc7-synth/${{ steps.design.outputs.design }}.bit

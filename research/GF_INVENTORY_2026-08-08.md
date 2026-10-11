@@ -24,9 +24,9 @@ GF-T — это не «GF на тернаре», это отдельный фо�
 
 | Репозиторий | Что это | Состояние |
 |---|---|---|
-| **`goldenfloat-preprint`** 🔒 | **Канонический источник препринта GoldenFloat** — `gf_preprint_v19.tex` + PDF + CHANGELOG | v19. Правки GF вносить СЮДА |
-| **`arith2027-goldenfloat`** | Заготовка под **ARITH 2027**, 8 страниц IEEE CS | пока только `PLAN.md` + README — не написана |
-| **`paper3-methodology`** | «An 84-Format Numeric Catalog with Bit-Exact Conformance Vectors» — `main.tex` + два PDF (v3, v4) | опубликована как arXiv:2606.09686 |
+| **`goldenfloat-preprint`** 🔒 | **Канонический источник препринта GoldenFloat** — `gHashTag/goldenfloat-preprint/gf_preprint_v19.tex` + PDF + CHANGELOG | v19. Правки GF вносить СЮДА |
+| **`arith2027-goldenfloat`** | Заготовка под **ARITH 2027**, 8 страниц IEEE CS | пока только `gHashTag/arith2027-goldenfloat/PLAN.md` + README — не написана |
+| **`paper3-methodology`** | «An 84-Format Numeric Catalog with Bit-Exact Conformance Vectors» — `gHashTag/paper3-methodology/main.tex` + два PDF (v3, v4) | опубликована как arXiv:2606.09686 |
 | **`trinity-papers-ru`** | Русские версии статей (для ВАК?) | TeX |
 | **`phi-paper`** 🔒 | Pellis–Vasilev–Olsen, методологическая | TeX |
 | **`trinity-clara`** | Пакет подачи DARPA CLARA | TeX |
@@ -115,7 +115,7 @@ GF-T — это не «GF на тернаре», это отдельный фо�
 
 ## Куда что вносить
 
-- Правки **GF** (бинарная лестница) → `goldenfloat-preprint`, файл `gf_preprint_v19.tex`
+- Правки **GF** (бинарная лестница) → `goldenfloat-preprint`, файл `gHashTag/goldenfloat-preprint/gf_preprint_v19.tex`
 - Правки **GF-T** → новая статья `trinity-fpga/research/arxiv_gft/gft_paper.tex`
 - Материал под конференцию → `arith2027-goldenfloat` (пустая заготовка, дедлайн ARITH 2027)
 - Оракулы и векторы → `trinity-fpga/conformance/`

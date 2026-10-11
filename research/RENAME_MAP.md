@@ -24,6 +24,16 @@ throughout, in prose and in filenames.
 | `tef_mul_wp.v`, `gft_add_w` -- absent from every tree | the TEF-era module names; the surviving RTL is under `fpga/tnet/` and `fpga/phiscale/` |
 | `main_ru.tex`, `paper1-goldenfloat/main_ru.tex` -- absent from every tree | retired -- the Russian-language paper line was not carried forward |
 | `ARXIV_UPLOAD_EN_v2.md`, `ARXIV_GFT16_v2.md` | superseded by `research/arxiv_tnf/` |
+| `trinity-fpga/build/gft_mul8/gft_mul.v` -- a build directory, never tracked | the module of that name is `fpga/gft/gft_mul.v` in `tri-net`; its width-correct replacement here is `fpga/gft/gft_mul_w.v` |
+
+Two of those names, `ARXIV_GFT16_v2.md` and `gft_paper.tex`, are back in the
+tree as records. #510, opened 2026-08-08 and
+merged 2026-10-04, added `research/ARXIV_GFT16_v2.md` and `research/arxiv_gft/`
+(the GF-T paper, its figures and its build notes) together with the `fpga/gft/`
+RTL. Those documents predate both renames and name the GF-T oracles in the first
+row, which this tree no longer has, so the accuracy numbers in the GF-T paper
+cannot be re-derived from this tree. The current paper is still
+`research/arxiv_tnf/`.
 
 ## The prefix hazard
 

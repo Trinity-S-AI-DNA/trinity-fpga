@@ -2,5 +2,7 @@ research/8BIT_LUT_COMPARISON.json
 research/GPU_BENCHMARK_RESULTS.json
 research/H100_FORMAT_COMPARISON.json
 research/H100_FORMAT_COMPARISON_OFFICIAL_BPB.json
+research/arxiv_gft/competition.json
+research/arxiv_gft/gft_competition.pdf
 research/block/kurtosis_all.json
 research/unified_fineweb_benchmark.json

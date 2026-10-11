@@ -12,11 +12,13 @@ on:
       - '.github/workflows/**'
       - 'tools/check_run_syntax.py'
       - 'tools/test_check_run_syntax.py'
+      - 'tools/run_syntax_fixtures/**'
   pull_request:
     paths:
       - '.github/workflows/**'
       - 'tools/check_run_syntax.py'
       - 'tools/test_check_run_syntax.py'
+      - 'tools/run_syntax_fixtures/**'
   workflow_dispatch:
 
 jobs:
@@ -26,7 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # the self-test reads main's two broken files at e6eac090
+          # No history needed: the self-test's two inputs from e6eac090 are
+          # files in tools/run_syntax_fixtures/, pinned by blob id.
           submodules: false
       - name: The gate rejects what it exists to catch
         run: python3 tools/test_check_run_syntax.py

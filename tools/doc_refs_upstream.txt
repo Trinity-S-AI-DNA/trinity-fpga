@@ -41,6 +41,10 @@ research/ERRATUM_arXiv_2606.09686_catalog_count.md: names `gHashTag/t27/specs/nu
 research/ERRATUM_arXiv_2606.09686_catalog_count.md: names `gHashTag/t27/specs/numeric/formats_catalog.t27`
 research/ERRATUM_arXiv_2606.09686_catalog_count.md: names `gHashTag/t27/specs/numeric/formats_catalog.t27`
 research/GFT16_BEATS_TEKUM16_2026-08-05.md: names `gHashTag/t27/specs/numeric/gft16.t27`
+research/GF_INVENTORY_2026-08-08.md: names `gHashTag/arith2027-goldenfloat/PLAN.md`
+research/GF_INVENTORY_2026-08-08.md: names `gHashTag/goldenfloat-preprint/gf_preprint_v19.tex`
+research/GF_INVENTORY_2026-08-08.md: names `gHashTag/goldenfloat-preprint/gf_preprint_v19.tex`
+research/GF_INVENTORY_2026-08-08.md: names `gHashTag/paper3-methodology/main.tex`
 research/GF_T_GOLD_STANDARD_LADDER_2026-08-05.md: names `gHashTag/t27/specs/numeric/gft16.t27`
 research/GF_T_GOLD_STANDARD_LADDER_2026-08-05.md: names `gHashTag/t27/specs/numeric/gft32.t27`
 research/GF_T_GOLD_STANDARD_LADDER_2026-08-05.md: names `gHashTag/t27/specs/numeric/gft4.t27`

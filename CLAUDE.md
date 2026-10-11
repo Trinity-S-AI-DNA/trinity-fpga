@@ -301,7 +301,7 @@ Owner's rule, 2026-09-20: stop writing in other people's languages, we have our
 own.
 
 This bites on any file whose only reason to exist is that an outside tool
-expects that shape: `llms.txt`, `agents.json`, `ai.txt`, `.well-known/*.json`,
+expects that shape: `llms.txt`, agents.json, `ai.txt`, `.well-known/*.json`,
 A2A agent cards, `ai-plugin` manifests, OpenAPI stubs, JSON-LD blocks, a README
 that restates a spec. The reflex is to write four of them in four foreign
 formats, and the reflex is wrong: a project whose claim is "here is a language

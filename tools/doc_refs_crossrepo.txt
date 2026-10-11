@@ -1,9 +1,14 @@
-AGENTS.md: names `agents.json` -> resolves in t27
-CLAUDE.md: names `agents.json` -> resolves in t27
 docs/REFEREE-PAGE.md: names `gft_sadd.t27` -> resolves in t27
 docs/REFEREE-PAGE.md: names `gft_smul.t27` -> resolves in t27
 docs/docs/tri27/index.md: names `hello.t27` -> resolves in tri-net
 docs/handoff/HANDOFF_AGENT.md: names `docs/NOW.md` -> resolves in t27
 docs/research/gf16_family_phi_layout.md: names `vectors.json` -> resolves in zig-golden-float
+research/GFT_DEFECTS_2026-08-08.md: names `gft_add64.v` -> resolves in tri-net
+research/GFT_DEFECTS_2026-08-08.md: names `gft_mul.v` -> resolves in tri-net
+research/GFT_DEFECTS_2026-08-08.md: names `gft_mul32.v` -> resolves in tri-net
+research/GFT_DEFECTS_2026-08-08.md: names `trinity-gf16.tex` -> resolves in t27
+research/GF_INVENTORY_2026-08-08.md: names `gft_add64.v` -> resolves in tri-net
+research/GF_INVENTORY_2026-08-08.md: names `gft_mul.v` -> resolves in tri-net
 research/GF_T_GOLD_STANDARD_LADDER_2026-08-05.md: names `tri_compute_bitnet.t27` -> resolves in tri-net
+research/arxiv_gft/README.md: names `gft_mul32.v` -> resolves in tri-net
 research/frontier/DOCUMENT_TRACEABILITY_2026-08-10.md: names `cases.yaml` -> resolves in claim-audit-lab
