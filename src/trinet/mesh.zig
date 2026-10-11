@@ -18,6 +18,7 @@ const std = @import("std");
 const protocol = @import("protocol.zig");
 const node_mod = @import("node.zig");
 const ledger_mod = @import("ledger.zig");
+const journal_mod = @import("journal.zig");
 
 pub const Node = node_mod.Node;
 pub const Ledger = ledger_mod.Ledger;
@@ -33,7 +34,13 @@ pub const Error = error{
     UnknownNode,
     DuplicateNode,
     InsufficientStake,
+    InvalidOwner,
     UnsoundPolicy,
+    /// The journal could not take the next nonce mark, so no nonce is issued.
+    JournalWrite,
+    JournalUnavailable,
+    /// The 32-bit nonce space is spent; nodes need a new key epoch.
+    NonceSpaceExhausted,
 };
 
 pub const JobOutcome = struct {
@@ -68,6 +75,8 @@ pub const Stats = struct {
     corrupt_jobs: u64 = 0,
     unverifiable_jobs: u64 = 0,
     not_eligible_jobs: u64 = 0,
+    /// Verified but not put on disk, or a nonce this run did not issue.
+    not_recorded_jobs: u64 = 0,
     on_silicon: u64 = 0,
     in_software: u64 = 0,
 
@@ -92,6 +101,10 @@ pub const Mesh = struct {
     stats: Stats = .{},
     cursor: usize = 0,
     next_nonce: u32 = 1,
+    /// With a journal: the highest nonce mark on disk, and where this run
+    /// resumed. Nonces are issued only in [resumed_from, nonce_mark).
+    nonce_mark: u32 = 0,
+    resumed_from: u32 = 1,
 
     pub fn init(gpa: std.mem.Allocator, policy: ledger_mod.Policy) Error!Mesh {
         return .{ .gpa = gpa, .ledger = try Ledger.init(gpa, policy) };
@@ -122,10 +135,36 @@ pub const Mesh = struct {
         return k;
     }
 
-    pub fn freshNonce(self: *Mesh) u32 {
+    /// Open the coordinator's journal (journal.zig): rebuild what was paid and
+    /// resume nonces at the last mark, so a restart never reissues a nonce.
+    pub fn openJournal(self: *Mesh, j: journal_mod.Journal, operator: []const u8) journal_mod.Error!journal_mod.Restored {
+        const r = try self.ledger.openJournal(j, operator);
+        self.nonce_mark = r.mark;
+        self.next_nonce = if (r.mark == 0) 1 else r.mark;
+        self.resumed_from = self.next_nonce;
+        return r;
+    }
+
+    pub fn freshNonce(self: *Mesh) Error!u32 {
+        if (self.ledger.journal) |j| {
+            // Reserve before issuing: the mark is on disk before any nonce at
+            // or above the old mark goes out.
+            if (self.next_nonce >= self.nonce_mark) {
+                const mark = journal_mod.nextMark(self.nonce_mark);
+                if (mark == 0 or mark <= self.next_nonce) return Error.NonceSpaceExhausted;
+                j.writeMark(mark) catch return Error.JournalWrite;
+                self.nonce_mark = mark;
+            }
+        }
         const n = self.next_nonce;
         self.next_nonce +%= 1;
         return n;
+    }
+
+    /// With a journal, only a nonce this run issued may be credited.
+    fn issuedByThisRun(self: *Mesh, nonce: u32) bool {
+        if (self.ledger.journal == null) return true;
+        return nonce >= self.resumed_from and nonce < self.next_nonce;
     }
 
     fn pickEligible(self: *Mesh) ?*Node {
@@ -167,6 +206,18 @@ pub const Mesh = struct {
 
         if (job.nonceValue() > n.highest_nonce_issued) n.highest_nonce_issued = job.nonceValue();
 
+        if (!self.issuedByThisRun(job.nonceValue())) {
+            self.stats.not_recorded_jobs += 1;
+            return .{
+                .node_id = n.id,
+                .node_name = n.name,
+                .physical = n.isPhysical(),
+                .y = receipt.y,
+                .verdict = protocol.verifyWithKey(job, receipt, n.key),
+                .settlement = .{ .node_id = n.id, .outcome = .not_recorded, .detail = "nonce not issued by this coordinator run" },
+            };
+        }
+
         var verdict = protocol.verifyWithKey(job, receipt, n.key);
 
         // A nonce mismatch means either a replay attack or a stream that lost a
@@ -198,6 +249,7 @@ pub const Mesh = struct {
             // We declined to use the node. That is our scheduling decision, not
             // the node's conduct.
             .not_eligible => self.stats.not_eligible_jobs += 1,
+            .not_recorded => self.stats.not_recorded_jobs += 1,
             .rejected_and_slashed, .identity_mismatch => {
                 self.stats.rejected += 1;
                 n.stats.rejected += 1;
@@ -320,7 +372,7 @@ pub const Mesh = struct {
 
             for (0..take) |k| {
                 const row = next_row + k;
-                const nonce = self.freshNonce();
+                const nonce = try self.freshNonce();
                 if (nonce > n.highest_nonce_issued) n.highest_nonce_issued = nonce;
                 jobs[k] = protocol.Job.withNonce(nonce, rows[row], x);
                 row_of[k] = row;
@@ -350,6 +402,7 @@ pub const Mesh = struct {
                         .corrupt_not_charged => self.stats.corrupt_jobs += 1,
                         .unverifiable_not_charged => self.stats.unverifiable_jobs += 1,
                         .not_eligible => self.stats.not_eligible_jobs += 1,
+                        .not_recorded => self.stats.not_recorded_jobs += 1,
                         .rejected_and_slashed, .identity_mismatch => {
                             self.stats.rejected += 1;
                             n.stats.rejected += 1;
@@ -662,4 +715,257 @@ test "a mesh with no eligible node fails loudly instead of silently faking work"
     var m = try Mesh.init(std.testing.allocator, .{});
     defer m.deinit();
     try std.testing.expectError(Error.NoEligibleNode, m.dispatch(testJob(0)));
+}
+
+// ---------------------------------------------------------------------------
+// The coordinator's journal across restarts (gHashTag/trinity-fpga#906,
+// gHashTag/t27 specs/trinet/node-work-credit.t27).
+
+fn journalText(path: [:0]const u8, buf: []u8) []const u8 {
+    const f = std.c.fopen(path.ptr, "r") orelse return "";
+    defer _ = std.c.fclose(f);
+    return buf[0..std.c.fread(buf.ptr, 1, buf.len, f)];
+}
+
+fn journaledJob(m: *Mesh, seed: u8) !protocol.Job {
+    return protocol.Job.withNonce(try m.freshNonce(), @splat(seed), @splat(0x55));
+}
+
+/// Lay down a journal by hand, to restart on top of one a running coordinator
+/// cannot produce on purpose: a torn tail, or a line that does not parse.
+fn writeJournalText(path: [:0]const u8, text: []const u8) !void {
+    const f = std.c.fopen(path.ptr, "w") orelse return error.JournalWrite;
+    const written = std.c.fwrite(text.ptr, 1, text.len, f);
+    if (std.c.fclose(f) != 0 or written != text.len) return error.JournalWrite;
+}
+
+test "a restarted coordinator never pays the same (node, nonce) twice" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const j: journal_mod.Journal = .{ .path = "/tmp/trinet-mesh-restart-906.jsonl" };
+    _ = std.c.unlink(j.path.ptr);
+    defer _ = std.c.unlink(j.path.ptr);
+
+    var saved: protocol.Job = undefined;
+    {
+        var m = try Mesh.init(std.testing.allocator, .{});
+        defer m.deinit();
+        try m.join(Node.initEmulated(0x4E4F4431, "peer-1", .honest), "dmitrii-f-t27", 100000);
+        const r = try m.openJournal(j, "dmitrii-f-t27");
+        try std.testing.expectEqual(@as(u32, 0), r.mark);
+        for (0..3) |i| {
+            const job = try journaledJob(&m, @intCast(i));
+            if (i == 0) saved = job;
+            const o = try m.dispatch(job);
+            try std.testing.expectEqual(ledger_mod.Outcome.credited, o.settlement.outcome);
+        }
+        try std.testing.expectEqual(@as(u32, 1), saved.nonceValue());
+    }
+    {
+        // The restart: a new process, the same journal.
+        var m = try Mesh.init(std.testing.allocator, .{});
+        defer m.deinit();
+        try m.join(Node.initEmulated(0x4E4F4431, "peer-1", .honest), "dmitrii-f-t27", 100000);
+        const r = try m.openJournal(j, "dmitrii-f-t27");
+        try std.testing.expectEqual(@as(u64, 3), r.credits);
+        try std.testing.expectEqual(@as(u32, 1024), r.mark);
+
+        // The job saved from the first run earns nothing now: its nonce lies
+        // below where this run resumed.
+        const replayed = try m.dispatch(saved);
+        try std.testing.expectEqual(ledger_mod.Outcome.not_recorded, replayed.settlement.outcome);
+        try std.testing.expectEqual(@as(u64, 0), replayed.settlement.credit_delta_mtri);
+
+        // New work resumes at the mark, never at 1.
+        const fresh = try journaledJob(&m, 9);
+        try std.testing.expectEqual(@as(u32, 1024), fresh.nonceValue());
+        const o = try m.dispatch(fresh);
+        try std.testing.expectEqual(ledger_mod.Outcome.credited, o.settlement.outcome);
+    }
+    var buf: [4096]u8 = undefined;
+    const text = journalText(j.path, &buf);
+    try std.testing.expectEqual(@as(usize, 4), std.mem.count(u8, text, "\"mtri\":1}"));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "\"nonce\":1,"));
+    try std.testing.expect(std.mem.indexOf(u8, text, "{\"mark\":2048}") != null);
+}
+
+test "a coordinator run by the node's owner writes self-reported credits" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const j: journal_mod.Journal = .{ .path = "/tmp/trinet-mesh-level-906.jsonl" };
+    for ([_][]const u8{ "dmitrii-f-t27", "", "gHashTag" }) |operator| {
+        _ = std.c.unlink(j.path.ptr);
+        var m = try Mesh.init(std.testing.allocator, .{});
+        defer m.deinit();
+        try m.join(Node.initEmulated(0x4E4F4431, "peer-1", .honest), "dmitrii-f-t27", 100000);
+        _ = try m.openJournal(j, operator);
+        _ = try m.dispatch(try journaledJob(&m, 1));
+        var buf: [1024]u8 = undefined;
+        const text = journalText(j.path, &buf);
+        const want: []const u8 = if (std.mem.eql(u8, operator, "gHashTag")) "\"level\":\"verified\"" else "\"level\":\"self_reported\"";
+        try std.testing.expect(std.mem.indexOf(u8, text, want) != null);
+    }
+    _ = std.c.unlink(j.path.ptr);
+}
+
+test "a forged answer is refused and never reaches the journal" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const j: journal_mod.Journal = .{ .path = "/tmp/trinet-mesh-forged-906.jsonl" };
+    _ = std.c.unlink(j.path.ptr);
+    defer _ = std.c.unlink(j.path.ptr);
+    var m = try Mesh.init(std.testing.allocator, .{});
+    defer m.deinit();
+    try m.join(Node.initEmulated(0x4E4F4432, "lazy", .lazy), "dmitrii-f-t27", 100000);
+    _ = try m.openJournal(j, "dmitrii-f-t27");
+    const o = try m.dispatch(protocol.Job.withNonce(try m.freshNonce(), @splat(0x55), @splat(0x55)));
+    try std.testing.expect(o.settlement.outcome != .credited);
+    var buf: [1024]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, journalText(j.path, &buf), "\"mtri\""));
+}
+
+test "every credit line names the owner its own node was registered to" {
+    // The handle in the line is what a payout is read off, so it has to be the
+    // node's owner -- not the coordinator's operator, and not whichever owner
+    // happened to be settled first.
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const j: journal_mod.Journal = .{ .path = "/tmp/trinet-mesh-owner-906.jsonl" };
+    _ = std.c.unlink(j.path.ptr);
+    defer _ = std.c.unlink(j.path.ptr);
+
+    var m = try Mesh.init(std.testing.allocator, .{});
+    defer m.deinit();
+    try m.join(Node.initEmulated(0x4E4F4431, "peer-1", .honest), "developer-1", 100000);
+    try m.join(Node.initEmulated(0x4E4F4432, "peer-2", .honest), "developer-2", 100000);
+    _ = try m.openJournal(j, "gHashTag");
+
+    // Round-robin: one job each.
+    for (0..2) |_| {
+        const o = try m.dispatch(try journaledJob(&m, 1));
+        try std.testing.expectEqual(ledger_mod.Outcome.credited, o.settlement.outcome);
+    }
+
+    var buf: [4096]u8 = undefined;
+    const text = journalText(j.path, &buf);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "\"owner\":\"developer-1\""));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "\"owner\":\"developer-2\""));
+    try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, text, "\"operator\":\"gHashTag\""));
+    // The operator is not an owner of anything here.
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, text, "\"owner\":\"gHashTag\""));
+}
+
+test "a journal torn mid-line refuses to open, twice over, and is left untouched" {
+    // The regression this exists for: the coordinator used to open a torn
+    // journal successfully and carry on writing. `append` uses fopen("a"), so
+    // the first mark it wrote was glued onto the unfinished line -- see
+    // journal.zig "writing on top of a torn tail is what corrupts a journal"
+    // for what that does. One start cannot see it; the SECOND start is where
+    // the damage surfaces, so this test performs both.
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const j: journal_mod.Journal = .{ .path = "/tmp/trinet-mesh-torn-906.jsonl" };
+    defer _ = std.c.unlink(j.path.ptr);
+    // A mark, one whole credit, and a line the process died inside.
+    const torn = "{\"mark\":1024}\n" ++
+        "{\"t\":1,\"operator\":\"\",\"owner\":\"dmitrii-f-t27\",\"node\":\"4e4f4431\",\"physical\":false,\"nonce\":1,\"y\":3,\"tag\":\"0000000000000000\",\"tag_kind\":\"crc32\",\"level\":\"self_reported\",\"mtri\":1}\n" ++
+        "{\"t\":2,\"operator\":\"\",\"owner\":\"dmitrii-f-t27\",\"node\":\"4e4f4431\",\"physi";
+    try writeJournalText(j.path, torn);
+
+    // First start after the crash: refused before any nonce or credit.
+    {
+        var m = try Mesh.init(std.testing.allocator, .{});
+        defer m.deinit();
+        try m.join(Node.initEmulated(0x4E4F4431, "peer-1", .honest), "dmitrii-f-t27", 100000);
+        try std.testing.expectError(journal_mod.Error.JournalTornTail, m.openJournal(j, ""));
+        try std.testing.expect(m.ledger.journal == null);
+        try std.testing.expectEqual(@as(u32, 0), m.nonce_mark);
+        try std.testing.expectEqual(@as(u64, 0), m.ledger.total_credited_mtri);
+    }
+
+    var buf: [4096]u8 = undefined;
+    try std.testing.expectEqualStrings(torn, journalText(j.path, &buf));
+
+    // Second start: the same named error, not a journal that has since become
+    // unparsable, and still not a byte written.
+    {
+        var m = try Mesh.init(std.testing.allocator, .{});
+        defer m.deinit();
+        try m.join(Node.initEmulated(0x4E4F4431, "peer-1", .honest), "dmitrii-f-t27", 100000);
+        try std.testing.expectError(journal_mod.Error.JournalTornTail, m.openJournal(j, ""));
+    }
+    var buf2: [4096]u8 = undefined;
+    try std.testing.expectEqualStrings(torn, journalText(j.path, &buf2));
+
+    // Read-only inspection still describes the file rather than refusing it:
+    // one whole credit, the mark, and a tail somebody has to decide about.
+    var spent: std.AutoHashMapUnmanaged(u64, void) = .empty;
+    defer spent.deinit(std.testing.allocator);
+    const seen = try j.restore(std.testing.allocator, &spent);
+    try std.testing.expect(seen.torn_tail);
+    try std.testing.expectEqual(@as(u64, 1), seen.credits);
+    try std.testing.expectEqual(@as(u32, 1024), seen.mark);
+}
+
+test "a journal line that does not parse stops the coordinator, it does not read as empty" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const j: journal_mod.Journal = .{ .path = "/tmp/trinet-mesh-malformed-906.jsonl" };
+    defer _ = std.c.unlink(j.path.ptr);
+    // A complete line with no node field: we cannot tell what it paid.
+    try writeJournalText(j.path, "{\"mark\":1024}\n{\"t\":1,\"owner\":\"dmitrii-f-t27\",\"nonce\":1,\"mtri\":1}\n");
+
+    var m = try Mesh.init(std.testing.allocator, .{});
+    defer m.deinit();
+    try m.join(Node.initEmulated(0x4E4F4431, "peer-1", .honest), "dmitrii-f-t27", 100000);
+    try std.testing.expectError(journal_mod.Error.JournalMalformed, m.openJournal(j, ""));
+    // The journal was not adopted, so nothing here can credit against it. The
+    // runner turns this error into a refusal to start (main.zig).
+    try std.testing.expect(m.ledger.journal == null);
+    try std.testing.expectEqual(@as(u64, 0), m.ledger.total_credited_mtri);
+}
+
+test "an unwritable journal issues no nonce and credits nothing" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const j: journal_mod.Journal = .{ .path = "/nonexistent-dir-906/journal.jsonl" };
+    var m = try Mesh.init(std.testing.allocator, .{});
+    defer m.deinit();
+    try m.join(Node.initEmulated(0x4E4F4431, "peer-1", .honest), "dmitrii-f-t27", 100000);
+    _ = try m.openJournal(j, "dmitrii-f-t27");
+    try std.testing.expectError(Error.JournalWrite, m.freshNonce());
+
+    // Even a job whose nonce slipped through earns nothing it cannot record.
+    m.nonce_mark = 10;
+    m.next_nonce = 2;
+    m.resumed_from = 1;
+    const o = try m.dispatch(protocol.Job.withNonce(1, @splat(0x55), @splat(0x55)));
+    try std.testing.expectEqual(ledger_mod.Outcome.not_recorded, o.settlement.outcome);
+    try std.testing.expectEqual(@as(u64, 0), m.ledger.total_credited_mtri);
+}
+
+test "an unreadable journal refuses to open" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    var m = try Mesh.init(std.testing.allocator, .{});
+    defer m.deinit();
+    try std.testing.expectError(journal_mod.Error.JournalUnreadable, m.openJournal(.{ .path = "/tmp" }, ""));
+}
+
+test "an owner name the journal cannot hold is refused at the door, not at payout" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const j: journal_mod.Journal = .{ .path = "/tmp/trinet-mesh-handle-906.jsonl" };
+    _ = std.c.unlink(j.path.ptr);
+    defer _ = std.c.unlink(j.path.ptr);
+    {
+        var m = try Mesh.init(std.testing.allocator, .{});
+        defer m.deinit();
+        _ = try m.openJournal(j, "");
+        try std.testing.expectError(Error.InvalidOwner, m.join(Node.initEmulated(0x4E4F4431, "peer-1", .honest), "developer 1", 100000));
+        try m.join(Node.initEmulated(0x4E4F4432, "peer-2", .honest), "developer-2", 100000);
+    }
+    {
+        // Joined before the journal opened: the journal refuses to open.
+        var m = try Mesh.init(std.testing.allocator, .{});
+        defer m.deinit();
+        try m.join(Node.initEmulated(0x4E4F4431, "peer-1", .honest), "a\"b", 100000);
+        try std.testing.expectError(journal_mod.Error.InvalidHandle, m.openJournal(j, ""));
+    }
+    {
+        var m = try Mesh.init(std.testing.allocator, .{});
+        defer m.deinit();
+        try std.testing.expectError(journal_mod.Error.InvalidHandle, m.openJournal(j, "op erator"));
+    }
 }

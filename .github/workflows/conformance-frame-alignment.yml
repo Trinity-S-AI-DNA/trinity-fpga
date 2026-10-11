@@ -11,11 +11,14 @@ on:
       - 'conformance/frame_alignment_check.py'
       - 'conformance/gfternary_compute_conformance_ax7203.py'
       - 'conformance/trinet_mac32_conformance_ax7203.py'
+      # the TRI-NET stack the trinet-tests job runs: a change to it must run them
+      - 'src/trinet/**'
   pull_request:
     paths:
       - 'conformance/**'
       - 'fpga/vivado/**'
       - 'fpga/openxc7-synth/**'
+      - 'src/trinet/**'
   schedule:
     # Daily, so a wrapper edit that silently orphans a host surfaces within a
     # day rather than at the next flash session.

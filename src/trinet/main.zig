@@ -285,6 +285,55 @@ var fleet_nodes = [_]FleetNode{
 const key_file_env = "TRINET_KEYS";
 const key_file_default = "trinet-keys.txt";
 
+/// The coordinator's journal (journal.zig, gHashTag/trinity-fpga#906). Unset:
+/// credits live in memory, as before. Set: paid (node, nonce) pairs and the
+/// nonce mark survive a restart, and a credit counts only once it is on disk.
+const journal_env = "TRINET_JOURNAL";
+/// The handle a board attached by this process is credited to.
+const owner_env = "TRINET_OWNER";
+/// Who runs this coordinator. Unset, or equal to the owner, writes every
+/// credit as self-reported (gHashTag/t27 specs/trinet/node-work-credit.t27).
+const operator_env = "TRINET_OPERATOR";
+
+fn envOr(name: [*:0]const u8, default: []const u8) []const u8 {
+    const v = std.c.getenv(name) orelse return default;
+    const s = std.mem.span(v);
+    return if (s.len == 0) default else s;
+}
+
+fn ownerHandle() []const u8 {
+    return envOr(owner_env, "operator");
+}
+
+/// Open TRINET_JOURNAL if it is set. A journal that cannot be read stops the
+/// run: crediting without knowing what was already paid is the bug it fixes.
+fn openJournalFromEnv(m: *mesh_mod.Mesh) !void {
+    const p = std.c.getenv(journal_env) orelse return;
+    const path = std.mem.span(p);
+    const operator = envOr(operator_env, "");
+    const r = m.openJournal(.{ .path = path }, operator) catch |e| {
+        std.debug.print("journal {s}: {s} -- not crediting without it\n", .{ path, @errorName(e) });
+        switch (e) {
+            // Say what it is, because the file is fine to READ and the fix is
+            // an operator's decision, not a retry.
+            error.JournalTornTail => std.debug.print("The last line was never finished: a previous run died mid-write.\n" ++
+                "Appending to it would glue the next line onto the tear, so this run\n" ++
+                "stops and the file is left exactly as it is. Stop here and keep the\n" ++
+                "file unchanged: it holds the paid set and the nonce reserve mark.\n" ++
+                "Recover it only under control, after checking its complete credit\n" ++
+                "lines and its last complete mark line.\n", .{}),
+            else => {},
+        }
+        return e;
+    };
+    std.debug.print("journal {s}: {d} paid jobs restored, nonces resume at {d}, credits {s}\n", .{
+        path,
+        r.credits,
+        m.next_nonce,
+        if (operator.len == 0) "self-reported (TRINET_OPERATOR unset)" else "by operator",
+    });
+}
+
 /// The UART divisor the fleet bitstream is built with. The board's line rate is
 /// CFGMCLK / this, so it is also the only honest way to read CFGMCLK back out of
 /// a negotiated rate.
@@ -352,6 +401,7 @@ fn fleet(gpa: std.mem.Allocator, ports: []const [:0]const u8) !void {
 
     var m = try mesh_mod.Mesh.init(gpa, .{});
     defer m.deinit();
+    try openJournalFromEnv(&m);
 
     var attached: usize = 0;
     var stale_boards: usize = 0;
@@ -406,7 +456,7 @@ fn fleet(gpa: std.mem.Allocator, ports: []const [:0]const u8) !void {
             stale_boards += 1;
             std.debug.print("{s}: PUBLISHED KEY — receipts carry no evidence. Re-flash with `trinet keygen`.\n", .{p});
         }
-        try m.join(n, "operator", 100000);
+        try m.join(n, ownerHandle(), 100000);
         attached += 1;
         std.debug.print("{s}: identified as {s}, id {x:0>8} at {d} baud{s}\n", .{
             p, spec.?.name, spec.?.id, found.baud,
@@ -716,11 +766,12 @@ fn bench(gpa: std.mem.Allocator, path: []const u8, n: usize, baud: u32) !void {
 fn buildMesh(gpa: std.mem.Allocator, serial_path: ?[]const u8, buf: []u8) !mesh_mod.Mesh {
     var m = try mesh_mod.Mesh.init(gpa, .{});
     errdefer m.deinit();
+    try openJournalFromEnv(&m);
 
     if (serial_path) |p| {
         const zpath = try std.fmt.bufPrintZ(buf, "{s}", .{p});
         if (node_mod.Node.initFpga(protocol.default_node_id, "ax7203-node0", zpath, default_baud)) |fpga| {
-            try m.join(fpga, "operator", 100000);
+            try m.join(fpga, ownerHandle(), 100000);
             std.debug.print("node 0: physical AX7203 on {s}\n", .{p});
         } else |e| {
             std.debug.print("node 0: no board ({s}) — running without a physical node\n", .{@errorName(e)});

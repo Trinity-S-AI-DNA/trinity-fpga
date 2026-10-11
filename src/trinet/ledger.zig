@@ -28,6 +28,7 @@
 
 const std = @import("std");
 const protocol = @import("protocol.zig");
+const journal_mod = @import("journal.zig");
 
 /// Credits are tracked in milli-TRI so that per-job rewards stay integral.
 pub const milli: u64 = 1000;
@@ -131,6 +132,11 @@ pub const Outcome = enum {
     unverifiable_not_charged,
     /// Node is suspended and should not have been dispatched to.
     not_eligible,
+    /// The coordinator could not put the credit on disk, or the nonce was not
+    /// issued by this coordinator run. Not credited and NOT slashed: both are
+    /// statements about us. A credit that is not on disk does not count
+    /// (gHashTag/t27 specs/trinet/node-work-credit.t27 may_credit).
+    not_recorded,
 };
 
 pub const Settlement = struct {
@@ -146,6 +152,9 @@ pub const Error = error{
     UnknownNode,
     DuplicateNode,
     InsufficientStake,
+    /// With a journal open, an owner name the journal cannot hold. Refused at
+    /// registration: accepted here it would earn work and never be credited.
+    InvalidOwner,
     OutOfMemory,
 };
 
@@ -160,6 +169,12 @@ pub const Ledger = struct {
     total_corrupted: u64 = 0,
     total_unverifiable: u64 = 0,
     jobs_on_silicon: u64 = 0,
+    /// The durable record of what was paid (journal.zig). Without one, the
+    /// paid set lives in memory and a restart forgets it.
+    journal: ?journal_mod.Journal = null,
+    /// Who runs this coordinator. Empty, or equal to a node's owner, makes
+    /// that node's credits self-reported.
+    operator: []const u8 = "",
 
     pub fn init(gpa: std.mem.Allocator, policy: Policy) Error!Ledger {
         if (!policy.isSound()) return Error.UnsoundPolicy;
@@ -171,10 +186,32 @@ pub const Ledger = struct {
         self.spent_nonces.deinit(self.gpa);
     }
 
+    /// Open the coordinator's journal: rebuild the paid set from it and return
+    /// the nonce mark the coordinator must resume at. An unreadable journal is
+    /// an error, never an empty one.
+    ///
+    /// This is the spec's `may_start_crediting` (gHashTag/t27
+    /// specs/trinet/node-work-credit.t27): nothing is credited and no nonce is
+    /// issued unless the journal and its mark were read. A torn last line is
+    /// readable but not writable -- appending would glue the next line onto it
+    /// -- so it is refused here, before any nonce or credit, and the file is
+    /// left exactly as it was for an operator to look at.
+    pub fn openJournal(self: *Ledger, j: journal_mod.Journal, operator: []const u8) journal_mod.Error!journal_mod.Restored {
+        if (operator.len != 0 and !journal_mod.isHandle(operator)) return journal_mod.Error.InvalidHandle;
+        var it = self.accounts.valueIterator();
+        while (it.next()) |a| if (!journal_mod.isHandle(a.owner)) return journal_mod.Error.InvalidHandle;
+        const r = try j.restore(self.gpa, &self.spent_nonces);
+        if (r.torn_tail) return journal_mod.Error.JournalTornTail;
+        self.journal = j;
+        self.operator = operator;
+        return r;
+    }
+
     /// A developer attaches a node and bonds a stake. This is the whole
     /// onboarding step: an identity, an owner, and something to lose.
     pub fn register(self: *Ledger, node_id: u32, owner: []const u8, physical: bool, stake_mtri: u64) Error!void {
         if (self.accounts.contains(node_id)) return Error.DuplicateNode;
+        if (self.journal != null and !journal_mod.isHandle(owner)) return Error.InvalidOwner;
         if (stake_mtri < self.policy.min_stake_mtri) return Error.InsufficientStake;
         try self.accounts.put(self.gpa, node_id, .{
             .node_id = node_id,
@@ -292,7 +329,11 @@ pub const Ledger = struct {
 
         // Pay once per nonce, per node. Without this a node can resubmit the
         // same verified receipt forever.
-        const key = (@as(u64, dispatched_to) << 32) | job.nonceValue();
+        //
+        // The key comes from journal.zig, which is also what `restore` rebuilds
+        // the set with. Spelling the same shift out twice is how a restart
+        // quietly stops recognising what it already paid.
+        const key = journal_mod.spentKey(dispatched_to, job.nonceValue());
         if (self.spent_nonces.contains(key)) {
             return .{
                 .node_id = dispatched_to,
@@ -300,9 +341,39 @@ pub const Ledger = struct {
                 .detail = "receipt for an already-settled nonce",
             };
         }
-        try self.spent_nonces.put(self.gpa, key, {});
-
         const reward = self.policy.reward_per_job_mtri;
+
+        // Room for the paid key BEFORE the line goes to disk. The other order --
+        // fsync the credit, then allocate -- can fail after the credit is
+        // durable, leaving a line on disk that this run never marked as paid; a
+        // later settle of the same (node, nonce) would then write a second line
+        // for it, which is the one thing the journal exists to prevent. Asking
+        // for the room first makes the failure happen before anything is
+        // written, and `putAssumeCapacity` below cannot fail.
+        try self.spent_nonces.ensureUnusedCapacity(self.gpa, 1);
+
+        // Write before credit: with a journal, a credit counts only once its
+        // line is on disk, so a crash can lose a credit but never repeat one.
+        if (self.journal) |j| {
+            j.writeCredit(.{
+                .operator = self.operator,
+                .owner = acct.owner,
+                .node_id = dispatched_to,
+                .physical = acct.physical,
+                .nonce = job.nonceValue(),
+                .y = receipt.y,
+                .tag = receipt.tag,
+                .tag_kind = @tagName(receipt.kind),
+                .level = journal_mod.Level.of(self.operator, acct.owner),
+                .mtri = reward,
+            }) catch return .{
+                .node_id = dispatched_to,
+                .outcome = .not_recorded,
+                .detail = "journal write failed: not credited",
+            };
+        }
+        self.spent_nonces.putAssumeCapacity(key, {});
+
         acct.credit_mtri += reward;
         acct.accepted += 1;
         acct.consecutive_rejections = 0;
@@ -563,6 +634,116 @@ test "a verifier holding no key charges nobody" {
     try std.testing.expectEqual(@as(u64, 0), l.get(0xB0A2D).?.rejected);
     try std.testing.expectEqual(@as(u64, 1), l.get(0xB0A2D).?.unverifiable);
     try std.testing.expectEqual(Status.active, l.get(0xB0A2D).?.status);
+}
+
+test "a receipt we cannot check is recorded nowhere, not even as verified" {
+    // `verified` is a statement about who vouched, not about the arithmetic:
+    // a coordinator run by somebody other than the node's owner writes that
+    // level on every credit it records. So the question this test asks is
+    // whether a receipt the coordinator could not judge can reach the journal
+    // at all under exactly those conditions -- because if it could, the record
+    // would read "verified" over a receipt nobody verified.
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const j: journal_mod.Journal = .{ .path = "/tmp/trinet-ledger-unverifiable-906.jsonl" };
+    _ = std.c.unlink(j.path.ptr);
+    defer _ = std.c.unlink(j.path.ptr);
+
+    var l = try Ledger.init(std.testing.allocator, .{});
+    defer l.deinit();
+    try l.register(0xB0A2D, "dmitrii-f-t27", true, 100_000);
+    _ = try l.openJournal(j, "gHashTag");
+    try std.testing.expectEqual(journal_mod.Level.verified, journal_mod.Level.of("gHashTag", "dmitrii-f-t27"));
+
+    // A keyed receipt and no key to check it with.
+    const job = makeJob(1);
+    var key: [16]u8 = undefined;
+    for (&key, 0..) |*b, i| b.* = @intCast(0x33 +% i);
+    const y = protocol.dot(job.w, job.x);
+    const keyed: protocol.Receipt = .{
+        .kind = .siphash24,
+        .y = y,
+        .status = protocol.status_ok,
+        .nonce = job.nonce,
+        .node_id = 0xB0A2D,
+        .tag = protocol.receiptTagKeyed(job, y, 0xB0A2D, key),
+    };
+    const verdict = protocol.verifyWithKey(job, keyed, null);
+    try std.testing.expectEqual(protocol.Verdict.unverifiable, verdict);
+    const s1 = try l.settle(0xB0A2D, job, keyed, verdict);
+    try std.testing.expectEqual(Outcome.unverifiable_not_charged, s1.outcome);
+
+    // And a receipt whose tag was altered on the way back.
+    const job2 = makeJob(2);
+    var tampered = protocol.execute(job2, 0xB0A2D);
+    tampered.tag ^= 0x40;
+    const s2 = try l.settle(0xB0A2D, job2, tampered, protocol.verify(job2, tampered));
+    try std.testing.expectEqual(Outcome.corrupt_not_charged, s2.outcome);
+
+    // Neither of them is on disk, at any level.
+    var spent: std.AutoHashMapUnmanaged(u64, void) = .empty;
+    defer spent.deinit(std.testing.allocator);
+    const restored = try j.restore(std.testing.allocator, &spent);
+    try std.testing.expectEqual(@as(u64, 0), restored.credits);
+    try std.testing.expectEqual(@as(u64, 0), l.total_credited_mtri);
+}
+
+test "a credit the journal refused is neither paid nor marked as paid" {
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    var l = try Ledger.init(std.testing.allocator, .{});
+    defer l.deinit();
+    try l.register(0x5005, "dmitrii-f-t27", true, 5000);
+    // Opening this is fine -- a journal that is not there yet is a fresh
+    // network. Writing to it can never work.
+    _ = try l.openJournal(.{ .path = "/nonexistent-dir-906/journal.jsonl" }, "");
+
+    const job = makeJob(5);
+    const r = protocol.execute(job, 0x5005);
+    const s = try l.settle(0x5005, job, r, protocol.verify(job, r));
+
+    try std.testing.expectEqual(Outcome.not_recorded, s.outcome);
+    try std.testing.expectEqual(@as(u64, 0), s.credit_delta_mtri);
+    // Not a punishment: a journal we cannot write is our failure, not the
+    // node's.
+    try std.testing.expectEqual(@as(u64, 0), s.slash_delta_mtri);
+    try std.testing.expectEqual(@as(u64, 0), l.get(0x5005).?.credit_mtri);
+    try std.testing.expectEqual(@as(u64, 5000), l.get(0x5005).?.stake_mtri);
+    try std.testing.expectEqual(@as(u64, 0), l.get(0x5005).?.rejected);
+    try std.testing.expectEqual(@as(u64, 0), l.total_credited_mtri);
+    // And not marked paid, so the same work is still payable once the journal
+    // works again. The line on disk, not this set, is what stops a second
+    // payment.
+    try std.testing.expect(!l.spent_nonces.contains(journal_mod.spentKey(0x5005, job.nonceValue())));
+}
+
+test "no credit reaches the disk that the paid set has no room to record" {
+    // The write-then-record order has one more failure between its two halves:
+    // the paid set has to grow. If it grew after the fsync, an allocation
+    // failure would leave a durable credit this run never marked paid, and the
+    // next settle of the same (node, nonce) would append a second line for it.
+    if (comptime !@import("builtin").link_libc) return error.SkipZigTest;
+    const j: journal_mod.Journal = .{ .path = "/tmp/trinet-ledger-noroom-906.jsonl" };
+    _ = std.c.unlink(j.path.ptr);
+    defer _ = std.c.unlink(j.path.ptr);
+
+    var l = try Ledger.init(std.testing.allocator, .{});
+    defer l.deinit();
+    try l.register(0x7007, "dmitrii-f-t27", true, 5000);
+    _ = try l.openJournal(j, "");
+
+    const job = makeJob(9);
+    const r = protocol.execute(job, 0x7007);
+    l.gpa = std.testing.failing_allocator;
+    try std.testing.expectError(Error.OutOfMemory, l.settle(0x7007, job, r, protocol.verify(job, r)));
+    // The accounts map was allocated by the real allocator and must be freed by
+    // it; the paid set never grew, so it owns nothing.
+    l.gpa = std.testing.allocator;
+
+    var spent: std.AutoHashMapUnmanaged(u64, void) = .empty;
+    defer spent.deinit(std.testing.allocator);
+    const restored = try j.restore(std.testing.allocator, &spent);
+    try std.testing.expectEqual(@as(u64, 0), restored.credits);
+    try std.testing.expectEqual(@as(u64, 0), l.get(0x7007).?.credit_mtri);
+    try std.testing.expectEqual(@as(u64, 0), l.total_credited_mtri);
 }
 
 test "work we can never pay for eventually stops being dispatched" {
