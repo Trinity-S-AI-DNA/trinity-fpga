@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import pathlib
-import subprocess
 import sys
 import tempfile
 
@@ -16,11 +16,6 @@ crs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(crs)
 
 H = "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
-
-
-def git_show(rev_path: str) -> str | None:
-    r = subprocess.run(["git", "-C", str(HERE), "show", rev_path], capture_output=True, text=True)
-    return r.stdout if r.returncode == 0 else None
 
 
 # (name, expected rc, workflow text)
@@ -110,12 +105,41 @@ CASES: list[tuple[str, int, str]] = [
     ("a step that is not a mapping = cannot tell", 2, H + "    steps:\n      - echo\n"),
 ]
 
-# The two defects this gate was written for, as they stood on main.
-for name, path in (("main's build-matrix.yml before the fix", ".github/workflows/build-matrix.yml"),
-                   ("main's iddr-golden-diff.yml before the fix", ".github/workflows/iddr-golden-diff.yml")):
-    # A missing commit (a shallow clone) is an empty file, rc 2, so the case
-    # goes BAD instead of quietly dropping out.
-    CASES.append((name, 1, git_show(f"e6eac090:{path}") or ""))
+# The two defects this gate was written for, as they stood on main at e6eac090.
+#
+# They are files here, not `git show e6eac090:<path>`. main was rewritten after
+# that commit (the same tree is 78606c5d on today's main), so a fresh clone no
+# longer has e6eac090: the read returned nothing and both cases went BAD on
+# every PR that runs this gate, whatever the PR changed. A file in the tree
+# does not depend on which history a clone has, or how deep it is.
+#
+# Each file is pinned to the blob id git gave that path at e6eac090. A fixture
+# that is missing or has been edited is an empty input, rc 2, so the case goes
+# BAD and says why -- it never quietly tests something else.
+FIXTURES = HERE / "run_syntax_fixtures"
+PIN_ERRORS: list[str] = []
+
+
+def pinned(fname: str, blob: str) -> str:
+    p = FIXTURES / fname
+    try:
+        data = p.read_bytes()
+    except OSError:
+        PIN_ERRORS.append(f"{fname}: missing")
+        return ""
+    got = hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+    if got != blob:
+        PIN_ERRORS.append(f"{fname}: blob {got}, pinned {blob}")
+        return ""
+    return data.decode()
+
+
+for name, fname, blob in (
+        ("main's build-matrix.yml before the fix",
+         "build-matrix.e6eac090.yml.txt", "9d07d6793905814b463d528b7d49d8b5fd2eed50"),
+        ("main's iddr-golden-diff.yml before the fix",
+         "iddr-golden-diff.e6eac090.yml.txt", "034f4e968cc93b07f6ad08ea17363c1e3e381027")):
+    CASES.append((name, 1, pinned(fname, blob)))
 
 
 def with_bash(major, f):
@@ -219,6 +243,8 @@ def run_case(text: str) -> tuple[int, str]:
 
 def main() -> int:
     good = 0
+    for e in PIN_ERRORS:
+        print(f"BAD  fixture {e}")
     for name, want, text in CASES:
         rc, out = run_case(text)
         if rc == want:
