@@ -1,0 +1,31 @@
+name: Node build provenance
+
+# `tri fpga-build` runs whatever build_trinet_node.py the chosen checkout holds (#849).
+# specs/trinet/node_build_provenance.t27 says how the script picks its repository
+# (--repo, else $TRI_FPGA_REPO, else ~/trinity-fpga) and what manifest.json records
+# about the script's checkout and that repository. This runs the script against the
+# spec in throwaway git repositories; no toolchain or board is involved.
+
+on:
+  pull_request:
+    paths:
+      - 'fpga/openxc7-synth/build_trinet_node.py'
+      - 'specs/trinet/node_build_provenance.t27'
+      - 'conformance/node_build_provenance_test.py'
+      - '.github/workflows/node-build-provenance.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'fpga/openxc7-synth/build_trinet_node.py'
+      - 'specs/trinet/node_build_provenance.t27'
+      - 'conformance/node_build_provenance_test.py'
+      - '.github/workflows/node-build-provenance.yml'
+
+jobs:
+  node-build-provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: python3 conformance/node_build_provenance_test.py

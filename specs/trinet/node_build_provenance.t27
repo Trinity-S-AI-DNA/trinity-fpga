@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: Apache-2.0
+; specs/trinet/node_build_provenance.t27 -- which checkout and commit built a TRI-NET node bitstream
+; Issue gHashTag/trinity-fpga#849. The one source for how fpga/openxc7-synth/build_trinet_node.py
+; picks the repository it builds from and what it writes about it into manifest.json.
+; conformance/node_build_provenance_test.py reads the constants below and checks the script against
+; them in throwaway git repositories; no name or rule here is typed a second time in the test.
+; Written 2026-10-11 before the script change. ASCII, English.
+
+; WHY. `tri fpga-build` runs `cd "$HOME/trinity-fpga" && exec python3 fpga/openxc7-synth/
+; build_trinet_node.py "$@"`. The script that runs is whatever ~/trinity-fpga has checked out. On
+; 2026-10-04 that checkout sat on another session's branch without --frames-tool, so
+; `tri fpga-build --frames-tool bitwalk` failed with an unknown argument, and a manifest from that
+; checkout would not have said which script version wrote it.
+
+; WHAT THE SCRIPT DOES.
+;   1. The repository it builds from (sources, constraints, the flash command's cwd) is, in order:
+;      --repo PATH if given; else the environment variable ENV_VAR if set and not empty (a leading
+;      ~ is expanded); else $HOME/FALLBACK_DIR. REPO_SOURCES names the three cases, in that order.
+;   2. Before any tool runs, it prints two lines: PRINT_SCRIPT_PREFIX with the checkout that holds
+;      the running script, and PRINT_REPO_PREFIX with the repository it builds from. Each line
+;      carries the path, the commit, the branch and, when tracked files differ from the commit,
+;      the word DIRTY_WORD.
+;   3. manifest.json gains two objects, MANIFEST_KEYS: "script" for the running script's checkout
+;      and "repo" for the build repository. Each has exactly the fields PROVENANCE_FIELDS:
+;        path    -- absolute real path of the checkout
+;        commit  -- full HEAD SHA (COMMIT_HEX_LEN lowercase hex), or null when the path is not a git
+;                   checkout or git is missing
+;        branch  -- `git rev-parse --abbrev-ref HEAD`: a branch name, DETACHED_BRANCH when detached,
+;                   null when there is no commit
+;        dirty   -- true when `git status --porcelain --untracked-files=no` prints anything;
+;                   null when commit is null. Untracked files (build outputs) do not count.
+;      "repo" carries one more field, REPO_SOURCE_FIELD, with one value of REPO_SOURCES.
+;      The script's checkout is the running file's real path with SCRIPT_REL removed from its end.
+;   4. With --rev the sources come from that revision, not from HEAD; the manifest keeps "rev" as
+;      before, and "repo".commit still names HEAD of the build repository, so the two can differ.
+
+; WHAT IT DOES NOT DO. It does not fetch, check out, stash or switch branches: a wrong or dirty
+; checkout is reported, never repaired. It does not refuse to build from a dirty checkout. It does
+; not change `tri fpga-build` itself; that wrapper lives outside this repository
+; (gHashTag/BrowserOS:trios/bin/tri) and must pass ENV_VAR through or cd into it.
+
+module trinet_node_build_provenance;
+
+pub const KIND : str = "tool-behaviour";
+pub const ID : str = "trinet/node_build_provenance";
+pub const ISSUE : str = "gHashTag/trinity-fpga#849";
+pub const SCRIPT_REL : str = "fpga/openxc7-synth/build_trinet_node.py";
+pub const TEST : str = "conformance/node_build_provenance_test.py";
+
+pub const ENV_VAR : str = "TRI_FPGA_REPO";
+pub const FALLBACK_DIR : str = "trinity-fpga";
+pub const REPO_SOURCES : [3]str = ["--repo", "TRI_FPGA_REPO", "default"];
+
+pub const MANIFEST_KEYS : [2]str = ["script", "repo"];
+pub const PROVENANCE_FIELDS : [4]str = ["path", "commit", "branch", "dirty"];
+pub const REPO_SOURCE_FIELD : str = "source";
+pub const COMMIT_HEX_LEN : u8 = 40;
+pub const DETACHED_BRANCH : str = "HEAD";
+pub const DIRTY_WORD : str = "dirty";
+
+pub const PRINT_SCRIPT_PREFIX : str = "script  ";
+pub const PRINT_REPO_PREFIX : str = "repo    ";
+; Both prefixes are as wide as the script's other report lines ("bit     ", "payload ").
+pub const PRINT_PREFIX_WIDTH : u8 = 8;
+
+test commit_is_a_full_sha1 {
+    assert COMMIT_HEX_LEN == 20 * 2;
+}
+
+test two_objects_four_fields {
+    assert MANIFEST_KEYS.len == 2;
+    assert PROVENANCE_FIELDS.len == 4;
+    assert REPO_SOURCES.len == 3;
+}
+
+test prefixes_line_up {
+    assert PRINT_SCRIPT_PREFIX.len == PRINT_PREFIX_WIDTH;
+    assert PRINT_REPO_PREFIX.len == PRINT_PREFIX_WIDTH;
+}

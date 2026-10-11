@@ -19,6 +19,10 @@ Example:
     python3 fpga/openxc7-synth/build_trinet_node.py --top blink --src blink.v --xdc blink.xdc \
         --no-node-params --out /tmp/trinet-node-build/smoke
 
+The build repository is --repo, else $TRI_FPGA_REPO, else ~/trinity-fpga. The first two lines
+printed, and manifest.json's "script" and "repo" objects, name the checkout and commit of the
+script that ran and of that repository (specs/trinet/node_build_provenance.t27).
+
 Keep --out outside the repository. Findings and hashes of the 2026-09-27
 restore: conformance/NODE_TOOLCHAIN_RESTORE.md.
 """
@@ -33,7 +37,23 @@ import sys
 import time
 
 HOME = os.path.expanduser("~")
-REPO = os.path.join(HOME, "trinity-fpga")
+# Which checkout this builds from and how the manifest names it: specs/trinet/node_build_provenance.t27
+# (#849). --repo, else $TRI_FPGA_REPO, else ~/trinity-fpga; `tri fpga-build` runs whatever script the
+# chosen checkout has, so the manifest records both the script's checkout and the build repository.
+REPO_ENV = "TRI_FPGA_REPO"
+SCRIPT_REL = os.path.join("fpga", "openxc7-synth", "build_trinet_node.py")
+
+
+def default_repo(environ=None):
+    """(path, source) of the build repository when --repo is not given."""
+    env = os.environ if environ is None else environ
+    value = env.get(REPO_ENV, "")
+    if value:
+        return os.path.expanduser(value), REPO_ENV
+    return os.path.join(HOME, "trinity-fpga"), "default"
+
+
+REPO, REPO_SOURCE = default_repo()
 OXC7 = os.path.join(HOME, "openxc7-src")
 NEXTPNR_SRC = os.path.join(OXC7, "nextpnr-xilinx")
 DB_SUBMODULE = os.path.join(NEXTPNR_SRC, "xilinx", "external", "prjxray-db")
@@ -173,6 +193,46 @@ def tool_versions():
     return v
 
 
+def script_checkout(script=None):
+    """The checkout that holds the running script: its real path minus SCRIPT_REL."""
+    path = os.path.realpath(script or __file__)
+    suffix = os.sep + SCRIPT_REL
+    return path[:-len(suffix)] if path.endswith(suffix) else os.path.dirname(path)
+
+
+def checkout_provenance(path):
+    """path, commit, branch, dirty of a checkout; commit/branch/dirty are None outside git."""
+    real = os.path.realpath(path)
+
+    def git(*cmd):
+        try:
+            r = subprocess.run(["git", "-C", real] + list(cmd), capture_output=True, text=True,
+                               timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return r.stdout.strip() if r.returncode == 0 else None
+
+    commit = git("rev-parse", "--verify", "-q", "HEAD")
+    if not commit:
+        return {"path": real, "commit": None, "branch": None, "dirty": None}
+    status = git("status", "--porcelain", "--untracked-files=no")
+    return {"path": real, "commit": commit, "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+            "dirty": None if status is None else bool(status)}
+
+
+def build_provenance(repo, source, script=None):
+    """The manifest's "script" and "repo" objects; "repo" also says how it was chosen."""
+    return {"script": checkout_provenance(script_checkout(script)),
+            "repo": dict(checkout_provenance(repo), source=source)}
+
+
+def describe_checkout(prov):
+    if not prov["commit"]:
+        return "%s (not a git checkout)" % prov["path"]
+    return "%s @ %s (%s%s)" % (prov["path"], prov["commit"][:12], prov["branch"],
+                               ", dirty" if prov["dirty"] else "")
+
+
 def ensure_db(db_root):
     if os.path.isdir(db_root):
         return
@@ -214,7 +274,8 @@ def main():
     ap.add_argument("--xdc", default=DEFAULT_XDC, help="repo-relative or absolute")
     ap.add_argument("--out", required=True, help="output directory")
     ap.add_argument("--src", nargs="+", default=DEFAULT_SRC, help="repo-relative or absolute")
-    ap.add_argument("--repo", default=REPO)
+    ap.add_argument("--repo", default=None,
+                    help="build repository (default: $%s, else ~/trinity-fpga)" % REPO_ENV)
     ap.add_argument("--rev", help="take --src/--xdc from this git rev (e.g. 1bb1d97e)")
     ap.add_argument("--node", type=int, choices=sorted(NODE_IDS), default=0)
     ap.add_argument("--baud-div", type=int, default=60)
@@ -245,6 +306,14 @@ def main():
                     help="run bitwalk AND fasm2frames + xc7frames2bit; stop unless the .frames "
                          "and the .bit are byte-identical")
     args = ap.parse_args()
+    if args.repo is None:
+        args.repo, repo_source = REPO, REPO_SOURCE
+    else:
+        repo_source = "--repo"
+    prov = build_provenance(args.repo, repo_source)
+    script_prov, repo_prov = prov["script"], prov["repo"]
+    print("script  %s" % describe_checkout(script_prov))
+    print("repo    %s [%s]" % (describe_checkout(repo_prov), repo_source))
 
     out = os.path.abspath(args.out)
     os.makedirs(out, exist_ok=True)
@@ -388,7 +457,8 @@ def main():
 
     manifest = {
         "top": args.top, "part": args.part, "node": args.node, "params": params,
-        "rev": args.rev, "placer_seed": chosen, "freq": args.freq, "yosys_script": ys,
+        "rev": args.rev, "script": script_prov, "repo": repo_prov,
+        "placer_seed": chosen, "freq": args.freq, "yosys_script": ys,
         "chipdb": args.chipdb, "db_root": args.db_root,
         "required_features_fasm": os.path.exists(req),
         "inputs": {os.path.basename(p): sha256(p) for p in srcs + [xdc]},
