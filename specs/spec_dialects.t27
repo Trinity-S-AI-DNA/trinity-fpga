@@ -60,7 +60,8 @@ Prose documents with `##` headings. vibee_gen refuses them since #793 and t27c
 cannot parse them. Nothing reads them by path; the references are links in
 other documents, which are updated in the same change.
 """
-  fate "renamed .tri -> .md, content byte-identical"
+  fate "renamed .tri -> .md; content unchanged except, in three of them
+        (storm/INDEX, fpga_build, vsa/core), the links to renamed files"
 }
 
 decision TOML {

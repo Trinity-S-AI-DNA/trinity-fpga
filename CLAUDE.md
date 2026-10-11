@@ -81,7 +81,13 @@ repository.
 | syntax | YAML, top-level `name:` | `spec X { }`, `pub fn f(x f32) -> gf16` |
 | compiler | `vibee_gen` (Zig, this repo) | `t27c` (Rust, separate repo) |
 | backends | Zig, Verilog | Zig, Verilog, HIR, SystemVerilog assertions |
-| this repo | 1137 specs | 25 `.t27` files under `specs/numeric/` |
+| this repo | 1065 specs | 25 `.t27` files under `specs/numeric/` |
+
+Under `.tri` there were in fact four languages (#792). `python3 tools/spec_dialects.py`
+prints the census with vibee_gen's own classifier: 1065 VIBEE YAML, 13 TOML (most are
+the `[dna] source` of a cell manifest), 14 t27-style sketches that `t27c` cannot parse,
+and 10 that fall through. Markdown documents carry `.md`, and generated output does not
+live in `specs/`; CI fails on either (`specs/spec_dialects.t27`).
 
 They are not interchangeable, and each compiler used to accept the other's
 files **silently**, producing an empty result and exit 0. `vibee_gen` now

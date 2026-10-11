@@ -100,9 +100,9 @@ openxc7 synthesis → .bitstream → .bit file
 
 #### Upcoming Specifications
 - **Behavior** — `docs/docs/internal/ACTIONS.md` (dictionary format of behavior)
-- **Grammar** — `specs/tri/lang-ref/grammar.tri` (already exists)
-- **Types** — `specs/tri/lang-ref/types.tri` (already exists)
-- **Tokens** — `specs/tri/lang-ref/tokens.tri` (already exists)
+- **Grammar** — `specs/tri/lang-ref/grammar.md` (already exists)
+- **Types** — `specs/tri/lang-ref/types.md` (already exists)
+- **Tokens** — `specs/tri/lang-ref/tokens.md` (already exists)
 
 #### BDD Usage
 ```zig
