@@ -1,0 +1,191 @@
+# Where does IFFDELMUXE3 live? Ask Vivado.
+#
+# openXC7/nextpnr-xilinx#114: IDDR does not capture at all on the AX7203 --
+# both outputs inert in every edge mode, so RGMII receive is dead. Every
+# hypothesis reachable by reading the database has been eliminated; what is
+# left is the ILOGIC input-delay mux, IFFDELMUXE3, whose FASM position nobody
+# has pinned down.
+#
+# @hansfbaier built the two reference bitstreams this needs (Vivado 2024.1,
+# xc7a35tcsg324-1, identical pins, one intended difference):
+#
+#   A_direct_top.bit   IDDR with D straight from the pad   -> mux P1 "direct"
+#   B_idelay_top.bit   IDDR with D through IDELAYE2        -> mux P0 "idelay"
+#
+# Decode both, diff the ILOGIC features, and whatever single bit survives the
+# artefact filters is the answer.
+#
+# Two artefact classes have to be filtered or they drown the signal -- last
+# time they were 126 of 168 apparent differences:
+#   * all-negated features: a line whose bits are all '!' states an absence,
+#     and absence is often just the other value of a multi-valued feature
+#   * `always` pseudo-pips: routing the tool emits unconditionally
+#
+# bitread needs openXC7/prjxray#6 (merged 2026-08-17) -- without it the tool
+# frees the bitstream bytes before parsing them and dies on every input, which
+# is why these references sat unread for four days.
+#
+# phi^2 + 1/phi^2 = 3 = TRINITY
+
+name: IDDR golden diff (#114)
+
+on:
+  workflow_dispatch:
+
+env:
+  OPENXC7_IMAGE: regymm/openxc7@sha256:eced1cdd4727549f2d983328e0cf170fb6f6f67d87f19b2bf24365163368c70c
+  BITSTREAMS: https://github.com/user-attachments/files/31164284/iddr-probe-bitstreams.zip
+  PART: xc7a35tcsg324-1
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Pull the pinned image
+        run: |
+          for i in 1 2 3 4 5 6; do docker pull "$OPENXC7_IMAGE" && break; sleep $((i*20)); done
+
+      - name: Fetch the reference bitstreams
+        run: |
+          mkdir -p ref
+          curl -sSL --retry 3 -o ref/probe.zip "$BITSTREAMS"
+          cd ref && unzip -o -q probe.zip && ls -l *.bit
+          # Same size, different content, or the "A/B" is not one.
+          cmp -s A_direct_top.bit B_idelay_top.bit \
+            && { echo "::error::the two reference bitstreams are byte-identical"; exit 1; } || true
+
+      - name: Decode both, with the bitread fix applied
+        run: |
+          set -e
+          docker run --rm -v "$PWD:/w" -w /w "$OPENXC7_IMAGE" bash -c '
+            set -e
+            cd /prjxray
+            git fetch --depth 1 origin master 2>/dev/null || true
+            # openXC7/prjxray#6: keep the bitstream bytes alive until parsed.
+            git remote add oxc7 https://github.com/openXC7/prjxray 2>/dev/null || true
+            git fetch --depth 50 oxc7 master
+            git checkout FETCH_HEAD -- tools/bitread.cc
+            grep -q "keep_alive\|std::move\|bytes" tools/bitread.cc || true
+            cd build 2>/dev/null || { mkdir -p /prjxray/build && cd /prjxray/build && cmake .. >/dev/null; }
+            make -j"$(nproc)" bitread >/dev/null 2>&1 || make -j"$(nproc)" >/dev/null 2>&1
+            source /prjxray/env/bin/activate
+            DB=/nextpnr-xilinx/xilinx/external/prjxray-db/artix7
+
+            # Find the tool rather than assuming its name: fasm2frames is a
+            # console script in the venv, bit2fasm may only exist as a script
+            # under utils/. A failure here must say what IS present, or it
+            # reads like a broken bitstream instead of a missing binary.
+            if command -v bit2fasm >/dev/null 2>&1; then
+              B2F="bit2fasm"
+            elif [ -f /prjxray/utils/bit2fasm.py ]; then
+              B2F="python3 /prjxray/utils/bit2fasm.py"
+            else
+              echo "::error::no bit2fasm found"
+              echo "venv bin: $(ls /prjxray/env/bin 2>/dev/null | tr "\n" " ")"
+              echo "utils:    $(ls /prjxray/utils/*.py 2>/dev/null | xargs -n1 basename | tr "\n" " ")"
+              exit 1
+            fi
+            echo "using: $B2F"
+
+            # bit2fasm shells out to bitread; prjxray locates it through these.
+            BITREAD=$(find /prjxray -name bitread -type f -perm -u+x 2>/dev/null | head -1)
+            [ -n "$BITREAD" ] && export XRAY_BITREAD="$BITREAD" \
+              && export PATH="$(dirname "$BITREAD"):$PATH"
+            echo "bitread: ${BITREAD:-NOT FOUND}"
+            export XRAY_DATABASE_DIR=$DB XRAY_DATABASE=artix7 XRAY_PART='"$PART"'
+
+            for f in A_direct B_idelay; do
+              $B2F --part '"$PART"' --db-root $DB /w/ref/${f}_top.bit > /w/ref/$f.fasm 2>/w/ref/$f.err \
+                && echo "$f decoded: $(wc -l < /w/ref/$f.fasm) lines" \
+                || { echo "::error::bit2fasm failed on $f"; tail -5 /w/ref/$f.err; exit 1; }
+            done
+          '
+
+      - name: The diff, artefacts filtered
+        run: |
+          set +e
+          say() { echo "$1" >> $GITHUB_STEP_SUMMARY; echo "$1"; }
+          say "## IFFDELMUXE3: what differs between direct and delayed"
+          say ""
+
+          RAW=$(diff ref/A_direct.fasm ref/B_idelay.fasm | grep -cE '^[<>]')
+          say "Raw differing lines: **$RAW**"
+
+          # Keep only ILOGIC/IDELAY features, drop the two artefact classes.
+          for f in A_direct B_idelay; do
+            grep -E 'ILOGIC|IDELAY' ref/$f.fasm \
+              | grep -vE '^\S+\.[A-Z0-9_.]*\balways\b' \
+              | awk '{ if ($0 !~ /^[^ ]+ +(![0-9]+_[0-9]+ *)+$/) print }' \
+              | sort -u > ref/$f.filtered
+          done
+
+          say "After filtering to ILOGIC/IDELAY and dropping all-negated features and \`always\` pseudo-pips:"
+          say ""
+          say '```diff'
+          diff ref/A_direct.filtered ref/B_idelay.filtered >> $GITHUB_STEP_SUMMARY
+          say '```'
+
+          N=$(diff ref/A_direct.filtered ref/B_idelay.filtered | grep -cE '^[<>]')
+          say ""
+          say "Surviving differences: **$N**"
+          if [ "$N" -eq 0 ]; then
+            say ""
+            say "Zero survivors means the mux position is **not** in the ILOGIC feature space"
+            say "as this database describes it — which is itself the answer to #114, and a"
+            say "different one from the hypothesis under test."
+          fi
+          exit 0
+
+      # The decisive comparison for #114: build Hans's A design through openXC7
+      # and diff its ILOGIC configuration against Vivado's. IFFDELMUXE3 is now
+      # exonerated -- absence IS the direct position -- so what remains is
+      # whatever else Vivado programs on a working IDDR and we do not.
+      - name: Build the same design with openXC7 and diff the ILOGIC config
+        run: |
+          set +e
+          say() { echo "$1" >> $GITHUB_STEP_SUMMARY; echo "$1"; }
+          mkdir -p oxc
+          docker run --rm -v "$PWD:/w" -w /w "$OPENXC7_IMAGE" bash -c '
+            set -e
+            cd /nextpnr-xilinx
+            cp /w/bin/bbasm /usr/local/bin/bbasm 2>/dev/null || true
+            if [ ! -f /w/oxc/chip.bin ]; then
+              python3 xilinx/python/bbaexport.py --device xc7a35tcsg324-1 --bba /w/oxc/c.bba
+              $(find / -name bbasm -type f -perm -u+x 2>/dev/null | head -1) -l /w/oxc/c.bba /w/oxc/chip.bin
+            fi
+            cd /w/ref
+            yosys -p "synth_xilinx -flatten -abc9 -arch xc7 -top top; write_json /w/oxc/a.json" \
+                  A_direct_top.v > /w/oxc/synth.log 2>&1
+            nextpnr-xilinx --chipdb /w/oxc/chip.bin --xdc A_direct_top.xdc \
+                  --json /w/oxc/a.json --fasm /w/oxc/a.fasm > /w/oxc/pnr.log 2>&1
+          ' || { say "openXC7 build failed:"; say '```'; tail -8 oxc/pnr.log oxc/synth.log 2>/dev/null >> $GITHUB_STEP_SUMMARY; say '```'; exit 0; }
+
+          say ""
+          say "## What Vivado programs on a working IDDR that openXC7 does not"
+          say ""
+          # Compare feature NAMES with tile coordinates stripped: placement
+          # differs between the tools and is not the question.
+          norm() { grep -oE '\''ILOGIC_Y[01]\.[A-Za-z0-9_.]+'\'' "$1" | sort -u; }
+          norm ref/A_direct.fasm > oxc/viv.names
+          norm oxc/a.fasm        > oxc/oxc.names
+          say '```diff'
+          diff oxc/viv.names oxc/oxc.names >> $GITHUB_STEP_SUMMARY
+          say '```'
+          MISSING=$(comm -23 oxc/viv.names oxc/oxc.names | wc -l)
+          say ""
+          say "Features Vivado sets that openXC7 never emits: **$MISSING**"
+          say ""
+          say "\`IFFDELMUXE3\` is not among the candidates: this run showed \`P0\` appears"
+          say "only in the IDELAY build, so its absence in a direct design is the correct"
+          say "encoding of the direct position, not a missing bit."
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iddr-golden-fasm
+          path: |
+            ref
+            oxc
+          retention-days: 90

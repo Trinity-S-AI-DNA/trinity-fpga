@@ -84,6 +84,14 @@ of that chain exists only as a line quoted inside a comment.
 
 ## 4. Never on this board
 
+Written before sections 8 and 9. Since 2026-09-27 two TNF cells have a board log on
+this AX7203: TNF16 add and mul, `TNFFormat(4, 11)` v2-spec, 1,035,886/1,035,886
+bit-exact (section 8, `board_runs/tnf16_board_ax7203.log`), and the MXFP4/TNF4 block
+dot product, 251,616/251,616 bit-exact (section 9, `board_runs/mxdot4_board_ax7203.log`).
+Both are arithmetic exactness only: no clock was measured and no advantage follows. The
+bullet below still holds for BNF, for the other three TNF16 definitions and for the LUT
+and Fmax figures it cites.
+
 - **TNF and BNF.** `fpga/tnet/MATRIX.md` gives BNF16 519 LUT at 71.05 MHz and
   TNF16 514 LUT at 74.37 MHz (lines 115–116). Its heading says "подтверждённая
   кремнием" (confirmed on silicon), but line 124 says the numbers were measured
