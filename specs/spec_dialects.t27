@@ -1,0 +1,129 @@
+# Trinity specs/ -- which language each .tri/.vibee file is written in, and what
+# happens to the ones that are not VIBEE YAML.
+# Issue: gHashTag/trinity-fpga#792. Measured 2026-10-11 on main b077048.
+
+spec SpecDialects version 1.0.0
+
+description """
+#792 found four languages under the .tri extension. #793 taught vibee_gen to
+refuse three of them by name, but left every file in place. This spec records
+the census on main, the fate decided for each dialect, and the two rules the
+checker tools/spec_dialects.py enforces so the tree cannot drift back.
+
+The classifier is vibee_gen's own foreignDialect (src/vibeec/vibee_gen.zig),
+applied in the same order, plus two fall-through classes it leaves to the
+generator on purpose. A second classifier with different rules would produce a
+second census, and the point of this one is that it agrees with the generator.
+"""
+
+// ---- Classification, in this order -----------------------------------------
+classifier DIALECT {
+  yaml        "a line starting `name:`"                       // vibee_gen reads it
+  markdown    "an ATX heading `## ` at line start"            // checked before t27:
+                                                              // prose can embed code
+  toml        "a line starting `[` AND the text ` = `"
+  t27_style   "`spec `, `invariant `, `numericformat ` or `pub fn ` at line start"
+  comment_led "first non-blank text starts with `//`"         // falls through
+  near_empty  "fewer than 3 non-blank lines"                  // falls through
+  other       "none of the above"                             // falls through
+}
+
+// ---- Census on main b077048, before this change -----------------------------
+measurement CENSUS_BEFORE {
+  files 1137   // every *.tri and *.vibee under specs/
+  buckets { yaml 1065  markdown 30  toml 13  t27_style 19  comment_led 5
+            near_empty 1  other 4 }
+  generated_output_in_specs 5
+  agrees_with_issue "total 1137 and 72 non-YAML, as #792 counted; the split
+                     between buckets moved because #792 counted by eye and
+                     this counts with the generator's own order"
+}
+
+// ---- The fate of each dialect -----------------------------------------------
+decision GENERATED_OUTPUT {
+  files [ "specs/tri/ab_testing_test.vibee"
+          "specs/tri/nft_marketplace.tri"   "specs/tri/nft_marketplace.vibee"
+          "specs/tri/formula_discovery.tri" "specs/tri/formula_discovery.vibee" ]
+  evidence """
+Each is Zig emitted by vibee_gen, carrying its banner `DO NOT EDIT - This file
+is auto-generated`, and each names a DIFFERENT module than its filename:
+ab_testing_test.vibee holds `3d_generation_v13590`, the other four hold
+`autonomous_universe`. No file in the tree names any of the five paths.
+"""
+  fate "deleted; the history keeps them"
+}
+
+decision MARKDOWN {
+  count 30
+  evidence """
+Prose documents with `##` headings. vibee_gen refuses them since #793 and t27c
+cannot parse them. Nothing reads them by path; the references are links in
+other documents, which are updated in the same change.
+"""
+  fate "renamed .tri -> .md; content unchanged except, in three of them
+        (storm/INDEX, fpga_build, vsa/core), the links to renamed files"
+}
+
+decision TOML {
+  count 13
+  evidence """
+9 of 13 are the `[dna] source` of a cell manifest (src/**/cell.tri,
+fpga/openxc7-synth/**/cell.tri) or are themselves one (specs/cell.tri).
+Renaming them breaks those manifests. The 4 under specs/hslm/ share the format.
+"""
+  fate "kept; vibee_gen refuses them by name"
+}
+
+decision T27_STYLE {
+  count 14
+  evidence """
+`spec X { behavior f(...) }` sketches. None parses with t27c (parse exit 1 on
+all 14, t27c bd56aefe2), so moving them to .t27 would add 14 NOPARSE files to
+the t27 corpus instead of migrating anything.
+"""
+  fate "kept; vibee_gen refuses them by name"
+}
+
+decision FALL_THROUGH {
+  count 10
+  evidence """
+vsa/encoding.tri and vsa_simple/vsa.tri are read by their own codegens
+(encoding_to_zig.zig, vsa_simple_to_zig.zig). #793 lets this class fall through
+on purpose: a false refusal breaks a working path, a miss keeps today's.
+"""
+  fate "kept"
+}
+
+// ---- What the checker enforces -----------------------------------------------
+rule NO_GENERATED_OUTPUT_IN_SPECS {
+  fails_on "a specs/**/*.tri or *.vibee that is NOT yaml and contains
+            `DO NOT EDIT - This file is auto-generated`"
+  not_on   "a yaml spec quoting the banner: specs/tri/codegen/core_emitter.tri
+            specifies the emitter that writes it"
+}
+
+rule NO_MARKDOWN_UNDER_TRI {
+  fails_on "a specs/**/*.tri or *.vibee classified markdown"
+}
+
+// The other non-YAML buckets are REPORTED, not failed on: each has a decided
+// fate above, and vibee_gen already refuses the ones it cannot read.
+
+measurement CENSUS_AFTER {
+  files 1102
+  buckets { yaml 1065  markdown 0  toml 13  t27_style 14  comment_led 5
+            near_empty 1  other 4 }
+  generated_output_in_specs 0
+}
+
+test_cases {
+  case "VIBEE YAML"                     input "name: x\nversion: 1\n"           expect yaml       rc 0
+  case "Markdown with ## heading"       input "# T\n\n## Module\ntri.x\n"       expect markdown   rc 1
+  case "Markdown embedding pub fn"      input "## A\n```zig\npub fn f() void {}\n```\n" expect markdown rc 1
+  case "a VIBEE comment `# Adagrad`"    input "# Adagrad\nname: adagrad\n"      expect yaml       rc 0
+  case "TOML cell"                      input "[spec]\nname = \"x\"\n"          expect toml       rc 0
+  case "t27-style sketch"               input "// c\nspec x {\n}\n"             expect t27_style  rc 0
+  case "generator banner"               input "// DO NOT EDIT - This file is auto-generated\nconst a = 1;\n" rc 1
+  case "yaml spec quoting the banner"   input "name: e\n# DO NOT EDIT - This file is auto-generated\n" expect yaml rc 0
+  case "empty tree"                     input ""                                 rc 1  // a census over nothing is not a pass
+}

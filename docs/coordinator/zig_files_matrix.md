@@ -111,7 +111,7 @@ specs/vsa/
 
 #### Wave 4A — Specs ✅
 **What was done:**
-- ✅ Created `specs/tri/math_transcendental_fn.tri` — complete specification of computing functions
+- ✅ Created `specs/tri/math_transcendental_fn.md` — complete specification of computing functions
 - ✅ Described 16 functions: exp, exp2, log, log2, log10, sin, cos, sincos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, asinh, acosh, atanh
 - ✅ Fixed range reduction strategy for each function
 - ✅ Defined accuracy levels: fast, single, double

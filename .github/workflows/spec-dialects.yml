@@ -1,0 +1,38 @@
+name: Spec dialects
+
+# Four languages shared the .tri extension under specs/ (#792). vibee_gen refuses
+# the foreign ones by name since #793, but nothing stopped a Markdown document or
+# a generated file from landing in specs/ again. This census fails on exactly
+# those two cases and reports the rest. See specs/spec_dialects.t27.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'specs/**'
+      - 'tools/spec_dialects.py'
+      - 'tools/test_spec_dialects.py'
+      - '.github/workflows/spec-dialects.yml'
+  pull_request:
+    paths:
+      - 'specs/**'
+      - 'tools/spec_dialects.py'
+      - 'tools/test_spec_dialects.py'
+      - '.github/workflows/spec-dialects.yml'
+  workflow_dispatch:
+
+jobs:
+  spec-dialects:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: The checker can fail
+        run: python3 tools/test_spec_dialects.py
+      - name: Census of specs/**/*.tri and *.vibee
+        run: python3 tools/spec_dialects.py --list

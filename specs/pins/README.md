@@ -28,13 +28,13 @@ Create proper `.tri` specifications for each module in `pins_parser.zig`:
    - Define token types, grammar rules
    - Parse `.pins.tri` files to AST
 
-2. **`specs/pins/validator.tri`** — Validation rules
+2. **`specs/pins/validator.md`** — Validation rules
    - Duplicate LOC detection
    - Missing bind checks
    - Orphaned signal detection
    - Pin direction conflicts
 
-3. **`specs/pins/emitter_xdc.tri`** — XDC generation
+3. **`specs/pins/emitter_xdc.md`** — XDC generation
    - Generate `.xdc` constraints from design
 
 4. **`specs/pins/emitter_pcf.tri`** — PCF generation
