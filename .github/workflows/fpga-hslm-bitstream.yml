@@ -19,6 +19,8 @@ on:
       - 'fpga/openxc7-synth/ternary_rmsnorm.v'
       - 'fpga/openxc7-synth/embedding_lookup.v'
       - 'fpga/openxc7-synth/argmax_unit.v'
+      - 'fpga/weights/embedding_weights.mem'
+      - '.github/workflows/fpga-hslm-bitstream.yml'
 
 jobs:
   bitstream:
@@ -50,6 +52,10 @@ jobs:
           echo "00000000000000000000000000000000" > tmu_w_wide.mem
           echo "00000000000000000000000000000000" > tmu_w_up_wide.mem
           echo "00000000000000000000000000000000" > tmu_w_down_wide.mem
+          # embedding_lookup.v reads embedding_weights.mem from Yosys's working directory. The file
+          # left this directory in 6f6840d52 (2026-03-18) and came back, byte-identical, only as
+          # fpga/weights/embedding_weights.mem (e8fa551a8); Yosys has failed on it since (#862).
+          cp ../weights/embedding_weights.mem .
 
       - name: Pull openXC7 Docker image
         run: |
