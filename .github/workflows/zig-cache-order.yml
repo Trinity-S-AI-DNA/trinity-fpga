@@ -1,0 +1,44 @@
+name: Zig cache order gate
+
+# mlugg/setup-zig restores the Zig cache into $GITHUB_WORKSPACE/.zig-cache, and
+# an actions/checkout of the workspace that runs after it deletes the lot.
+# brain-ci did this in all 8 of its Zig jobs: 238 restores in 25 runs, none
+# used, while its entries held most of the repository's Actions cache (#844,
+# #890). See tools/check_setup_zig_order.py; tools/test_check_setup_zig_order.py
+# plants every case it claims to decide, and runs first.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'tools/check_setup_zig_order.py'
+      - 'tools/test_check_setup_zig_order.py'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'tools/check_setup_zig_order.py'
+      - 'tools/test_check_setup_zig_order.py'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow_ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  zig-cache-order:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # The checker reads workflows with PyYAML, as the runner reads them.
+      # Without PyYAML it answers "cannot tell" (rc 2), never clean.
+      - name: PyYAML for the checker
+        run: |
+          python3 -c 'import yaml' 2>/dev/null \
+            || python3 -m pip install --quiet --user --break-system-packages pyyaml
+          python3 -c 'import yaml; print("PyYAML", yaml.__version__)'
+      - name: The checker decides every planted case
+        run: python3 tools/test_check_setup_zig_order.py
+      - name: No job checks out over its restored Zig cache
+        run: python3 tools/check_setup_zig_order.py
