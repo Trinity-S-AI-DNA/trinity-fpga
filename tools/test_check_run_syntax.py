@@ -29,6 +29,35 @@ CASES: list[tuple[str, int, str]] = [
     ("'\\'' inside single quotes is a quote", 0, H +
      "    steps:\n      - run: |\n          bash -c 'grep -oE '\\''A.+'\\'' x'\n"),
     ("an unclosed if", 1, H + "    steps:\n      - run: |\n          if true; then\n            echo x\n"),
+    # Inside a single-quoted -c script: one string to the outer bash -n.
+    ("an unclosed if inside bash -c '...'", 1, H +
+     "    steps:\n      - run: |\n          docker run img bash -c '\n"
+     "            if true; then\n              make\n          '\n"),
+    ("a clean bash -c '...' script", 0, H +
+     "    steps:\n      - run: |\n          docker run img bash -c '\n"
+     "            if true; then\n              make\n            fi\n          '\n"),
+    ("'\"$X\"' splices an outer value as one word", 0, H +
+     "    steps:\n      - run: |\n          docker run img bash -c '\n"
+     "            git checkout '\"$REV\"' && make /w/'\"$PART\"'.bin\n          '\n"),
+    ("an error after a splice is still seen", 1, H +
+     "    steps:\n      - run: |\n          docker run img bash -c '\n"
+     "            git checkout '\"$REV\"'\n            if true; then make\n          '\n"),
+    ("a bare '$X' splice is one word", 0, H +
+     "    steps:\n      - run: |\n          bash -c 'echo '$X' '${Y}' done'\n"),
+    ("sh -c '...' is checked with sh", 1, H +
+     "    steps:\n      - run: |\n          docker run img sh -c 'cat <(echo x)'\n"),
+    ("bash -lc '...' is checked", 1, H +
+     "    steps:\n      - run: |\n          bash -lc 'if true; then echo x'\n"),
+    ("bash -euo pipefail -c '...' is checked", 1, H +
+     "    steps:\n      - run: |\n          bash -euo pipefail -c 'if true; then echo x'\n"),
+    ("two scripts in one step: the second is checked too", 1, H +
+     "    steps:\n      - run: |\n          bash -c 'echo ok'\n          bash -c 'if true; then echo x'\n"),
+    ("a -c script glued to a word = cannot tell", 2, H +
+     "    steps:\n      - run: |\n          bash -c 'echo x'y\n"),
+    ("zsh -c '...' is not read", 0, H +
+     "    steps:\n      - run: |\n          zsh -c 'if true; then'\n"),
+    ("a double-quoted bash -c \"...\" is not read", 0, H +
+     "    steps:\n      - run: |\n          bash -c \"if true; then\"\n"),
     ("${{ }} is left as written", 0, H +
      "    steps:\n      - run: echo \"${{ github.sha }}\"\n"),
     # `cat <(echo x)` parses in bash and not in sh (dash, or bash in POSIX
