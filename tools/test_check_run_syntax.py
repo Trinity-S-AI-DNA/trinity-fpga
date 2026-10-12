@@ -29,6 +29,35 @@ CASES: list[tuple[str, int, str]] = [
     ("'\\'' inside single quotes is a quote", 0, H +
      "    steps:\n      - run: |\n          bash -c 'grep -oE '\\''A.+'\\'' x'\n"),
     ("an unclosed if", 1, H + "    steps:\n      - run: |\n          if true; then\n            echo x\n"),
+    # Inside a single-quoted -c script: one string to the outer bash -n.
+    ("an unclosed if inside bash -c '...'", 1, H +
+     "    steps:\n      - run: |\n          docker run img bash -c '\n"
+     "            if true; then\n              make\n          '\n"),
+    ("a clean bash -c '...' script", 0, H +
+     "    steps:\n      - run: |\n          docker run img bash -c '\n"
+     "            if true; then\n              make\n            fi\n          '\n"),
+    ("'\"$X\"' splices an outer value as one word", 0, H +
+     "    steps:\n      - run: |\n          docker run img bash -c '\n"
+     "            git checkout '\"$REV\"' && make /w/'\"$PART\"'.bin\n          '\n"),
+    ("an error after a splice is still seen", 1, H +
+     "    steps:\n      - run: |\n          docker run img bash -c '\n"
+     "            git checkout '\"$REV\"'\n            if true; then make\n          '\n"),
+    ("a bare '$X' splice is one word", 0, H +
+     "    steps:\n      - run: |\n          bash -c 'echo '$X' '${Y}' done'\n"),
+    ("sh -c '...' is checked with sh", 1, H +
+     "    steps:\n      - run: |\n          docker run img sh -c 'cat <(echo x)'\n"),
+    ("bash -lc '...' is checked", 1, H +
+     "    steps:\n      - run: |\n          bash -lc 'if true; then echo x'\n"),
+    ("bash -euo pipefail -c '...' is checked", 1, H +
+     "    steps:\n      - run: |\n          bash -euo pipefail -c 'if true; then echo x'\n"),
+    ("two scripts in one step: the second is checked too", 1, H +
+     "    steps:\n      - run: |\n          bash -c 'echo ok'\n          bash -c 'if true; then echo x'\n"),
+    ("a -c script glued to a word = cannot tell", 2, H +
+     "    steps:\n      - run: |\n          bash -c 'echo x'y\n"),
+    ("zsh -c '...' is not read", 0, H +
+     "    steps:\n      - run: |\n          zsh -c 'if true; then'\n"),
+    ("a double-quoted bash -c \"...\" is not read", 0, H +
+     "    steps:\n      - run: |\n          bash -c \"if true; then\"\n"),
     ("${{ }} is left as written", 0, H +
      "    steps:\n      - run: echo \"${{ github.sha }}\"\n"),
     # `cat <(echo x)` parses in bash and not in sh (dash, or bash in POSIX
@@ -225,15 +254,86 @@ DIRECT = [
      "cannot tell"),
     ("a pwsh step on macos is skipped, not cannot tell",
      lambda: with_bash(5, lambda: crs.shell_of({"shell": "pwsh"}, {"runs-on": "macos-15"}, {})), ()),
+    # Composite actions, under a bash 5 gate whatever bash runs this test.
+    ("a composite action a macOS job calls, bash 5 gate: rc 2",
+     lambda: with_bash(5, lambda: run_case("on: push\njobs:\n  j:\n    runs-on: macos-15\n" + CALL,
+                                           {"a/action.yml": A + "    - shell: bash\n      run: echo ok\n"})[0]),
+     2),
+    ("an action reached from a macOS job through another action, bash 5 gate: rc 2",
+     lambda: with_bash(5, lambda: run_case(
+         "on: push\njobs:\n  j:\n    runs-on: macos-15\n    steps:\n      - uses: ./.github/actions/outer\n",
+         {"outer/action.yml": A + "    - uses: ./.github/actions/a\n",
+          "a/action.yml": A + "    - shell: bash\n      run: echo ok\n"})[0]),
+     2),
+    ("the same action from an ubuntu job, bash 5 gate: rc 0",
+     lambda: with_bash(5, lambda: run_case(H + CALL, {"a/action.yml": A + "    - shell: bash\n      run: echo ok\n"})[0]),
+     0),
+    ("uses: ./x/ names the directory x",
+     lambda: crs.local_uses([{"uses": "./.github/actions/a/"}, {"uses": "actions/cache@v4"}, "echo"]),
+     [".github/actions/a"]),
 ]
 
 
-def run_case(text: str) -> tuple[int, str]:
+# Composite actions: (name, expected rc, workflow text, {path under .github/actions: text}).
+A = "runs:\n  using: composite\n  steps:\n"
+CALL = "    steps:\n      - uses: ./.github/actions/a\n"
+ACTION_CASES: list[tuple[str, int, str, dict[str, str]]] = [
+    ("a clean composite action", 0, H + CALL,
+     {"a/action.yml": A + "    - shell: bash\n      run: echo ok\n"}),
+    ("an unbalanced quote in a composite run step", 1, H + CALL,
+     {"a/action.yml": A + "    - shell: bash\n      run: 'echo \"x'\n"}),
+    ("an unclosed if inside bash -c '...' in a composite step", 1, H + CALL,
+     {"a/action.yml": A + "    - shell: bash\n      run: |\n        docker run img bash -c '\n"
+      "          if true; then\n            make\n        '\n"}),
+    ("a composite run step with no shell = cannot tell", 2, H + CALL,
+     {"a/action.yml": A + "    - run: echo ok\n"}),
+    ("a composite shell: sh is checked with sh", 1, H + CALL,
+     {"a/action.yml": A + "    - shell: sh\n      run: cat <(echo x)\n"}),
+    ("a composite shell: pwsh is skipped", 0, H + CALL,
+     {"a/action.yml": A + "    - shell: pwsh\n      run: Write-Host \"it's\n"}),
+    ("a composite uses: step is skipped", 0, H + CALL,
+     {"a/action.yml": A + "    - uses: actions/cache/restore@v4\n"}),
+    ("a node action is skipped", 0, H + CALL,
+     {"a/action.yml": "runs:\n  using: node20\n  main: index.js\n"}),
+    ("an action that is not YAML = cannot tell", 2, H + CALL, {"a/action.yml": "runs: [\n"}),
+    ("an action with no runs mapping = cannot tell", 2, H + CALL, {"a/action.yml": "name: a\n"}),
+    ("a composite action with no steps list = cannot tell", 2, H + CALL,
+     {"a/action.yml": "runs:\n  using: composite\n"}),
+    ("a composite step that is not a mapping = cannot tell", 2, H + CALL,
+     {"a/action.yml": A + "    - echo\n"}),
+    ("an action no workflow calls is still parsed", 1, H + "    steps:\n      - run: echo ok\n",
+     {"a/action.yml": A + "    - shell: bash\n      run: 'echo \"x'\n"}),
+    ("action.yaml is read", 1, H + CALL,
+     {"a/action.yaml": A + "    - shell: bash\n      run: 'echo \"x'\n"}),
+    ("an action in a nested directory is read", 1, H + "    steps:\n      - uses: ./.github/actions/g/a/\n",
+     {"g/a/action.yml": A + "    - shell: bash\n      run: 'echo \"x'\n"}),
+    ("a composite action called from a macOS job: bash 3.2 there", 1 if crs.bash_major() == 3 else 2,
+     "on: push\njobs:\n  j:\n    runs-on: macos-15\n" + CALL,
+     {"a/action.yml": A + "    - shell: bash\n      run: make 2>&1 |& tee build.log\n"}),
+    ("an action called only by an action a macOS job calls: bash 3.2 there",
+     1 if crs.bash_major() == 3 else 2,
+     "on: push\njobs:\n  j:\n    runs-on: macos-15\n    steps:\n      - uses: ./.github/actions/outer\n",
+     {"outer/action.yml": A + "    - uses: ./.github/actions/a\n",
+      "a/action.yml": A + "    - shell: bash\n      run: make 2>&1 |& tee build.log\n"}),
+    # Under a bash 5 gate this and the two above differ only in the caller's runner.
+    ("an ubuntu caller is plain bash", 0, H + CALL,
+     {"a/action.yml": A + "    - shell: bash\n      run: echo ok\n"}),
+    ("two actions that call each other end", 0, H + CALL,
+     {"a/action.yml": A + "    - uses: ./.github/actions/b\n    - shell: bash\n      run: echo ok\n",
+      "b/action.yml": A + "    - uses: ./.github/actions/a\n"}),
+]
+
+
+def run_case(text: str, actions: dict[str, str] | None = None) -> tuple[int, str]:
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)
         wf = root / ".github" / "workflows"
         wf.mkdir(parents=True)
         (wf / "t.yml").write_text(text)
+        for rel, body in (actions or {}).items():
+            p = root / ".github" / "actions" / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(body)
         crs.ROOT, crs.WORKFLOWS = root, wf
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -252,6 +352,14 @@ def main() -> int:
             print(f"ok   {name} (rc {rc})")
         else:
             print(f"BAD  {name}: want rc {want}, got {rc}\n{out}")
+    for name, want, text, actions in ACTION_CASES:
+        rc, out = run_case(text, actions)
+        as_expected = rc == want
+        if as_expected:
+            good += 1
+            print(f"ok   {name} (rc {rc})")
+        else:
+            print(f"BAD  {name}: want rc {want}, got {rc}\n{out}")
     for name, got, want in DIRECT:
         g = got()
         if g == want:
@@ -259,7 +367,7 @@ def main() -> int:
             print(f"ok   {name} ({g})")
         else:
             print(f"BAD  {name}: want {want}, got {g}")
-    total = len(CASES) + len(DIRECT)
+    total = len(CASES) + len(ACTION_CASES) + len(DIRECT)
     print(f"\n{good} of {total} cases as expected")
     return 0 if good == total else 1
 
