@@ -12,6 +12,13 @@ on:
       - 'fpga/vivado/led_onehot_ax7203.v'
       - 'specs/fpga/constraints/led_onehot_ax7203.xdc'
       - '.github/workflows/ax7203-led-onehot.yml'
+      - '.github/actions/openxc7-chipdb/**'
+  # The one build that runs when the shared chipdb action changes. None of the
+  # other workflows that call it watch .github/actions/, so without this an
+  # action-only change would reach main without a single run behind it.
+  pull_request:
+    paths:
+      - '.github/actions/openxc7-chipdb/**'
 
 jobs:
   bitstream:
@@ -43,28 +50,11 @@ jobs:
             " 2>&1 | tee /tmp/yosys.log
           grep -E "Estimated number of LCs|ERROR" /tmp/yosys.log
 
-      - name: Cache chipdb for xc7a200tfbg484-2
-        id: chipdb-cache
-        uses: actions/cache@v4
+      - id: chipdb-cache
+        uses: ./.github/actions/openxc7-chipdb
         with:
-          path: build/ax7203_onehot/chipdb/xc7a200tfbg484-2.bin
-          key: chipdb-xc7a200tfbg484-2-regymm-openxc7-${{ github.run_id }}
-          restore-keys: |
-            chipdb-xc7a200tfbg484-2-regymm-openxc7-
-
-      - name: Generate chipdb for xc7a200tfbg484-2
-        if: steps.chipdb-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p build/ax7203_onehot/chipdb
-          docker run --rm \
-            -v "$PWD:/work" -w /work \
-            regymm/openxc7 \
-            bash -c "
-              cd /nextpnr-xilinx && \
-              python3 xilinx/python/bbaexport.py --device xc7a200tfbg484-2 --bba /work/build/ax7203_onehot/chipdb/xc7a200tfbg484-2.bba && \
-              bbasm -l /work/build/ax7203_onehot/chipdb/xc7a200tfbg484-2.bba /work/build/ax7203_onehot/chipdb/xc7a200tfbg484-2.bin
-            "
-          ls -lh build/ax7203_onehot/chipdb/xc7a200tfbg484-2.bin
+          part: xc7a200tfbg484-2
+          out: build/ax7203_onehot/chipdb/xc7a200tfbg484-2.bin
 
       - name: nextpnr place and route
         run: |

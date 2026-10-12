@@ -31,19 +31,11 @@ jobs:
             synth_xilinx -flatten -abc9 -nocarry -arch xc7 -top gf24_clean_ax7203;
             setundef -zero -params; write_json build/gf24_clean/gf24_clean_ax7203.json" 2>&1 | tee /tmp/yosys.log
           grep -E "Estimated number of LCs|ERROR" /tmp/yosys.log
-      - name: Cache chipdb
-        id: chipdb-cache
-        uses: actions/cache@v4
+      - id: chipdb-cache
+        uses: ./.github/actions/openxc7-chipdb
         with:
-          path: build/gf24_clean/chipdb/xc7a200tfbg484-2.bin
-          key: chipdb-xc7a200tfbg484-2-regymm-openxc7-${{ github.run_id }}
-          restore-keys: chipdb-xc7a200tfbg484-2-regymm-openxc7-
-      - name: Generate chipdb
-        if: steps.chipdb-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p build/gf24_clean/chipdb
-          docker run --rm -v "$PWD:/work" -w /work regymm/openxc7 bash -c "
-            cd /nextpnr-xilinx && python3 xilinx/python/bbaexport.py --device xc7a200tfbg484-2 --bba /work/build/gf24_clean/chipdb/xc7a200tfbg484-2.bba && bbasm -l /work/build/gf24_clean/chipdb/xc7a200tfbg484-2.bba /work/build/gf24_clean/chipdb/xc7a200tfbg484-2.bin"
+          part: xc7a200tfbg484-2
+          out: build/gf24_clean/chipdb/xc7a200tfbg484-2.bin
       - name: nextpnr (seed search)
         run: |
           CLEAN=0

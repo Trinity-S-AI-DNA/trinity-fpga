@@ -99,17 +99,11 @@ jobs:
             echo "::error::DSP48 cells inferred"; exit 1
           fi
 
-      - uses: actions/cache@v4
-        id: chipdb
+      - id: chipdb
+        uses: ./.github/actions/openxc7-chipdb
         with:
-          path: build/${{ matrix.name }}/chipdb/xc7a200tfbg484-2.bin
-          key: chipdb-xc7a200tfbg484-2-regymm-${{ github.run_id }}-${{ matrix.name }}
-          restore-keys: chipdb-xc7a200tfbg484-2-regymm-
-
-      - if: steps.chipdb.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p build/${{ matrix.name }}/chipdb
-          docker run --rm -v "$PWD:/work" -w /work regymm/openxc7 bash -c "cd /nextpnr-xilinx && python3 xilinx/python/bbaexport.py --device xc7a200tfbg484-2 --bba /work/build/${{ matrix.name }}/chipdb/xc7a200tfbg484-2.bba && bbasm -l /work/build/${{ matrix.name }}/chipdb/xc7a200tfbg484-2.bba /work/build/${{ matrix.name }}/chipdb/xc7a200tfbg484-2.bin"
+          part: xc7a200tfbg484-2
+          out: build/${{ matrix.name }}/chipdb/xc7a200tfbg484-2.bin
 
       - name: nextpnr (heap + sa seed search)
         run: |

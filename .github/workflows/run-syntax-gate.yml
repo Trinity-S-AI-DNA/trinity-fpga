@@ -10,12 +10,14 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/**'
+      - '.github/actions/**'
       - 'tools/check_run_syntax.py'
       - 'tools/test_check_run_syntax.py'
       - 'tools/run_syntax_fixtures/**'
   pull_request:
     paths:
       - '.github/workflows/**'
+      - '.github/actions/**'
       - 'tools/check_run_syntax.py'
       - 'tools/test_check_run_syntax.py'
       - 'tools/run_syntax_fixtures/**'

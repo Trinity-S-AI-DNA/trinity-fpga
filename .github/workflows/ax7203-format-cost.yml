@@ -83,17 +83,11 @@ jobs:
             setundef -zero -params" 2>&1 | tee /tmp/yosys_carry.log
           grep -E "Estimated|ERROR" /tmp/yosys_carry.log
           ! grep -q "ERROR" /tmp/yosys_carry.log
-      - uses: actions/cache@v4
-        id: chipdb
+      - id: chipdb
+        uses: ./.github/actions/openxc7-chipdb
         with:
-          path: build/fmtcost/chipdb/xc7a200tfbg484-2.bin
-          key: chipdb-xc7a200tfbg484-2-regymm-${{ github.run_id }}
-          restore-keys: chipdb-xc7a200tfbg484-2-regymm-
-      - if: steps.chipdb.outputs.cache-hit != 'true'
-        name: Build chipdb
-        run: |
-          mkdir -p build/fmtcost/chipdb
-          docker run --rm -v "$PWD:/work" -w /work regymm/openxc7 bash -c "cd /nextpnr-xilinx && python3 xilinx/python/bbaexport.py --device xc7a200tfbg484-2 --bba /work/build/fmtcost/chipdb/xc7a200tfbg484-2.bba && bbasm -l /work/build/fmtcost/chipdb/xc7a200tfbg484-2.bba /work/build/fmtcost/chipdb/xc7a200tfbg484-2.bin"
+          part: xc7a200tfbg484-2
+          out: build/fmtcost/chipdb/xc7a200tfbg484-2.bin
       - name: nextpnr (seed search)
         run: |
           TOP=corona_compute_${{ matrix.cell }}_ax7203

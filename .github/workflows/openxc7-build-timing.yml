@@ -55,22 +55,11 @@ jobs:
           done
           docker image inspect regymm/openxc7:latest >/dev/null
 
-      - name: Cache chipdb
-        id: cache
-        uses: actions/cache@v4
+      - id: cache
+        uses: ./.github/actions/openxc7-chipdb
         with:
-          path: chipdb/xc7a200tfbg484-2.bin
-          key: chipdb-xc7a200tfbg484-2-regymm-v1
-
-      - name: Generate chipdb
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p chipdb
-          docker run --rm -v "$PWD:/work" -w /work regymm/openxc7 bash -c "
-            cd /nextpnr-xilinx &&
-            python3 xilinx/python/bbaexport.py --device xc7a200tfbg484-2 --bba /work/chipdb/xc7a200tfbg484-2.bba &&
-            bbasm -l /work/chipdb/xc7a200tfbg484-2.bba /work/chipdb/xc7a200tfbg484-2.bin
-          "
+          part: xc7a200tfbg484-2
+          out: chipdb/xc7a200tfbg484-2.bin
 
       - name: Upload chipdb
         uses: actions/upload-artifact@v4
