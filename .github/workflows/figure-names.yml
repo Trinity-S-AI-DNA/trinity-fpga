@@ -6,7 +6,11 @@ name: Figure names
 # nobody regenerates is a file nobody renames. No textual gate can see it; the
 # names are inside vector graphics.
 
-on: [pull_request, push]
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   figure-names:

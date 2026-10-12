@@ -6,7 +6,11 @@ name: Reference kinds
 # LaTeX resolves both silently and correctly by its own rules; the sentence is
 # what is wrong, and the sentence names the kind.
 
-on: [pull_request, push]
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   ref-kinds:

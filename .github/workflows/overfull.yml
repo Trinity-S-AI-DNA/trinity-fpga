@@ -6,7 +6,11 @@ name: Overfull boxes
 # hundreds of lines of engine chatter, and typesets the page anyway. It is not a
 # warning to a reader -- it is text they cannot see.
 
-on: [pull_request, push]
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   overfull:

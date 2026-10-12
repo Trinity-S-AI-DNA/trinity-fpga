@@ -6,7 +6,11 @@ name: Orphaned artefacts
 # file nobody regenerates is a file nobody renames. An orphaned artefact is not
 # merely a reproducibility gap; it is where staleness accumulates.
 
-on: [pull_request, push]
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   orphan-artefacts:
