@@ -19,6 +19,8 @@ on:
       - 'fpga/vivado/trinet_node_v2_ax7203.v'
       - 'fpga/openxc7-synth/trinet_siphash24.v'
       - 'formal/trinet_node_v2_tb.v'
+      # the comment-key guard mutates this bench (#877)
+      - 'formal/tern_tc_layer_rtl_tb.v'
       - 'conformance/key_default_check.py'
       - '.github/workflows/trinet-portability.yml'
       # the scripts this job runs: fixing a check must re-run it
@@ -29,6 +31,7 @@ on:
       - 'fpga/vivado/trinet_node_v2_ax7203.v'
       - 'fpga/openxc7-synth/trinet_siphash24.v'
       - 'formal/trinet_node_v2_tb.v'
+      - 'formal/tern_tc_layer_rtl_tb.v'
       - 'conformance/key_default_check.py'
   schedule:
     - cron: '41 5 * * *'
@@ -74,6 +77,38 @@ jobs:
             cp /tmp/tb.bak formal/trinet_node_v2_tb.v
             echo "::error::the guard failed, but not on rule 2"; cat /tmp/r2.log; exit 1; }
           cp /tmp/tb.bak formal/trinet_node_v2_tb.v
+
+      # The guard blanks comments before matching, because tern_tc_layer_rtl_tb.v
+      # names the core in its header and was read as two keyless instantiations.
+      # The other side of that must hold too: a key written only in a comment is
+      # not a key passed, and the failure must point at the real instantiation.
+      - name: The guard must reject a key that is only in a comment
+        run: |
+          tb=formal/tern_tc_layer_rtl_tb.v
+          cp "$tb" /tmp/tc.bak
+          inst_line=$(grep -n 'trinet_node_core #(' "$tb" | cut -d: -f1 || true)
+          one_inst=false; [ "$(printf '%s\n' "$inst_line" | grep -c '^[0-9][0-9]*$')" = 1 ] && one_inst=true
+          if [ "$one_inst" = false ]; then
+            echo "::error::want exactly one 'trinet_node_core #(' in $tb, got line(s): $inst_line"; exit 1
+          fi
+          sed -i "s|\.RECEIPT_KEY(128'h0)|/* .RECEIPT_KEY(128'h0) */|" "$tb"
+          mutated=false; grep -q "/\* \.RECEIPT_KEY(128'h0) \*/" "$tb" && mutated=true
+          accepted=false; python3 conformance/key_default_check.py > /tmp/r3.log 2>&1 && accepted=true
+          cp /tmp/tc.bak "$tb"
+          if [ "$mutated" = false ]; then
+            echo "::error::the mutation did not apply; the bench no longer passes .RECEIPT_KEY(128'h0)"; exit 1
+          fi
+          if [ "$accepted" = true ]; then
+            echo "::error::the key guard accepted a key written only in a comment"
+            cat /tmp/r3.log; exit 1
+          fi
+          rules=$(grep -c '^  RULE' /tmp/r3.log || true)
+          at_inst=false; grep -q "RULE 2  $tb:$inst_line:" /tmp/r3.log && at_inst=true
+          placed=false; [ "$at_inst" = true ] && [ "$rules" = 1 ] && placed=true
+          if [ "$placed" = false ]; then
+            echo "::error::want exactly one RULE 2 at $tb:$inst_line, got $rules rule line(s)"
+            cat /tmp/r3.log; exit 1
+          fi
 
   equivalence:
     # The AX7203 wrapper must still behave exactly like the node it wraps.

@@ -35,6 +35,19 @@ TB_DIRS = ["formal"]
 DEFAULT_RE = re.compile(
     r"parameter\s*(?:\[[^\]]*\]\s*)?RECEIPT_KEY\s*=\s*([^,;)\n]+)", re.I)
 
+# A comment that names a module is not an instantiation of it, and a RECEIPT_KEY
+# written in a comment is not a key passed. formal/tern_tc_layer_rtl_tb.v names
+# fpga/portable/trinet_node_core.v twice in its header, and this check read both
+# as instantiations without a key: red on every scheduled run on main from
+# 2026-09-28. Comments and string literals are blanked before matching, newlines
+# kept, so line numbers still point into the file.
+CODE_ONLY_RE = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"', re.S)
+
+
+def code_only(src: str) -> str:
+    """src with every comment and string literal blanked, newlines kept."""
+    return CODE_ONLY_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), src)
+
 
 def is_null_literal(text: str) -> bool:
     """True for 128'h0, 128'd0, 0, 128'h0000_0000_..., and nothing else."""
@@ -48,7 +61,7 @@ def is_null_literal(text: str) -> bool:
 
 def modules_with_key(path: pathlib.Path):
     """Yield (module_name, default_text) for modules declaring RECEIPT_KEY."""
-    src = path.read_text(errors="replace")
+    src = code_only(path.read_text(errors="replace"))
     for mm in re.finditer(r"\bmodule\s+(\w+)", src):
         name = mm.group(1)
         end = src.find("endmodule", mm.end())
@@ -59,7 +72,7 @@ def modules_with_key(path: pathlib.Path):
 
 def instantiations(path: pathlib.Path, known: set):
     """Yield (module, passes_key, line) for instantiations of known modules."""
-    src = path.read_text(errors="replace")
+    src = code_only(path.read_text(errors="replace"))
     for name in known:
         # name #( ... ) inst ( ... )   or   name inst ( ... )
         for m in re.finditer(r"\b" + re.escape(name) + r"\s*(#\s*\()?", src):
