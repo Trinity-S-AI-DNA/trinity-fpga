@@ -66,7 +66,15 @@ env:
   # main for that one cell, so the harness could not plant its defect.
   # 10 -> 11: check_tee_pipefail added to the harness, green on main from its
   # first commit (its known steps sit in tools/tee_pipefail_baseline.txt).
-  MIN_TESTABLE: '11'
+  # 11 -> 12: check_concurrency_groups added to the harness, green from its
+  # first commit, which also gave the 102 ungrouped workflows a group (#870).
+  MIN_TESTABLE: '12'
+
+# A newer push or PR commit replaces this file's pending run instead of
+# queueing behind it; a dispatch is never cancelled (gHashTag/trinity-fpga#869).
+concurrency:
+  group: ${{ github.workflow_ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   gates-can-fail:
@@ -83,9 +91,10 @@ jobs:
       - name: Materialise the sibling namespaces
         run: bash tools/materialise_siblings.sh
 
-      # check_tee_pipefail reads workflows with PyYAML; without it the gate
-      # says "cannot tell" on a clean tree, and could not be shown to fail.
-      - name: PyYAML for check_tee_pipefail
+      # check_tee_pipefail and check_concurrency_groups read workflows with
+      # PyYAML; without it each says "cannot tell" on a clean tree, and could
+      # not be shown to fail.
+      - name: PyYAML for the workflow gates
         run: |
           python3 -c 'import yaml' 2>/dev/null \
             || python3 -m pip install --quiet --user --break-system-packages pyyaml

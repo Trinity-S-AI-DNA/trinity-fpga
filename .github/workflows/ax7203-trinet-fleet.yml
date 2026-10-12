@@ -61,6 +61,12 @@ on:
 # Building the fleet at the old 434 would ship a network that is 4x slower than
 # the hardware has already been shown to manage.
 
+# A newer push or PR commit replaces this file's pending run instead of
+# queueing behind it; a dispatch is never cancelled (gHashTag/trinity-fpga#869).
+concurrency:
+  group: ${{ github.workflow_ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   fleet:
     runs-on: ubuntu-latest

@@ -1,0 +1,47 @@
+name: Concurrency gate
+
+# Every workflow that runs on a push to main needs a top-level concurrency
+# group of its own, or a burst of merges queues every run of every workflow.
+# Before #870, 2 of 104 had one and the repository had 194 runs queued at once
+# (gHashTag/trinity-fpga#869). #870 gave the other 102 the group this file
+# uses; this gate keeps a new workflow from arriving without one.
+# See tools/check_concurrency_groups.py; tools/test_check_concurrency_groups.py
+# plants every case it claims to decide, and runs first.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'tools/check_concurrency_groups.py'
+      - 'tools/test_check_concurrency_groups.py'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'tools/check_concurrency_groups.py'
+      - 'tools/test_check_concurrency_groups.py'
+  workflow_dispatch:
+
+# A newer push or PR commit replaces this file's pending run instead of
+# queueing behind it; a dispatch is never cancelled (gHashTag/trinity-fpga#869).
+concurrency:
+  group: ${{ github.workflow_ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  concurrency-groups:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # The checker reads workflows with PyYAML, as the runner reads them.
+      # Without PyYAML it answers "cannot tell" (rc 2), never clean.
+      - name: PyYAML for the checker
+        run: |
+          python3 -c 'import yaml' 2>/dev/null \
+            || python3 -m pip install --quiet --user --break-system-packages pyyaml
+          python3 -c 'import yaml; print("PyYAML", yaml.__version__)'
+      - name: The checker decides every planted case
+        run: python3 tools/test_check_concurrency_groups.py
+      - name: Every push-to-main workflow has a group of its own
+        run: python3 tools/check_concurrency_groups.py

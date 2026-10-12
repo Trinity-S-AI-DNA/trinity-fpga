@@ -24,6 +24,12 @@ on:
 # Building all three so the fastest working one can be found by measurement
 # rather than by argument.
 
+# A newer push or PR commit replaces this file's pending run instead of
+# queueing behind it; a dispatch is never cancelled (gHashTag/trinity-fpga#869).
+concurrency:
+  group: ${{ github.workflow_ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   baud:
     runs-on: ubuntu-latest

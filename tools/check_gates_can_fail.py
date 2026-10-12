@@ -112,6 +112,18 @@ CASES = {
         "        run: |\n"
         "          yosys -p synth.ys 2>&1 | tee synth.log\n",
     ),
+    # A workflow that runs on every push to main with no concurrency group:
+    # a burst of merges queues one run of it per push (#869).
+    "check_concurrency_groups": (
+        "create", ".github/workflows/gate-selftest-concurrency.yml",
+        "# Written by check_gates_can_fail and removed again.\n"
+        "on: push\n"
+        "jobs:\n"
+        "  selftest:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - run: true\n",
+    ),
     "check_withdrawn_live": (
         "\\paragraph{Withdrawn.} The earlier claim of $77.31\\times$ is withdrawn: "
         "it was measured against the broken oracle.\n\n"

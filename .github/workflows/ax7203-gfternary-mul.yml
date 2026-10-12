@@ -8,6 +8,12 @@ on:
       - 'fpga/openxc7-synth/corona_compute_gfternary_mul_ax7203.v'
       - 'conformance/gfternary_compute_conformance_ax7203.py'
       - '.github/workflows/ax7203-gfternary-mul.yml'
+# A newer push or PR commit replaces this file's pending run instead of
+# queueing behind it; a dispatch is never cancelled (gHashTag/trinity-fpga#869).
+concurrency:
+  group: ${{ github.workflow_ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   golden:
     runs-on: ubuntu-latest
