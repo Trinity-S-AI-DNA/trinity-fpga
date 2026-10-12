@@ -514,6 +514,14 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           echo "## Verdict" >> $GITHUB_STEP_SUMMARY
+          # A failed detect-build never writes `present`, and the test below
+          # read the empty value as "no root build.zig" and passed (#883).
+          detect_failed=true
+          [ "${{ needs.detect-build.result }}" == "success" ] && detect_failed=false
+          if [ "$detect_failed" = true ]; then
+            echo "### ! Brain CI cannot tell whether it applies: detect-build was ${{ needs.detect-build.result }}" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
           # When the root build.zig is absent, all brain jobs are `skipped`
           # (see detect-build). That is an honest "not applicable" state for
           # the current RTL/HW-focused repo, not damage — do not block on it.
@@ -622,7 +630,10 @@ jobs:
     name: 🔒 Merge Gate
     runs-on: ubuntu-latest
     needs: [brain-health-report]
-    if: github.event_name == 'pull_request'
+    # Without a status function GitHub adds success(), so this job ran only
+    # after a passing report and its "report did not pass" test could never
+    # be true: a damaged PR showed the gate as grey `skipped` (#883).
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
     timeout-minutes: 2
     steps:
       - name: Check Merge Eligibility
