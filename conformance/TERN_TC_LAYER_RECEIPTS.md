@@ -667,3 +667,52 @@ first job.
 What is left open: the source of the stalls, and whether a truly direct
 connection (no hub at all) changes the rate further. Window 24 stays the
 operating point.
+
+## Board run, 2026-10-24 UTC (the second-node run)
+
+**Result: PASS, twice.** The owner asked for the node cell to be finished as
+the second verification node of the receipt economy ("the crystal verifies:
+Mac dead -> runner alive -> runner dead -> crystal verifies"). Two full runs
+at the default window 24 on unmodified harness `c9b180bf` (main, after #918
+and #919), the second one saved as a durable artifact:
+
+    jobs sent               : 403200 of 403200 planned (window 24)
+    receipts verified (tag) : 403200/403200 under node 0x5452494e
+    rejected                : none
+    rows bit-exact          : 33792/33792  (activations: ternary)
+    elapsed                 : 88.03 s (4580 answers/s)   -- run 1
+    elapsed                 : 89.19 s (4521 answers/s)   -- rerun, logged
+
+Run 1's longest host pause was 80.0 ms (after 118,037 answers), the rerun's
+103.6 ms (after 323,870 answers). No framing slip in either run: the holes
+list (16, 4, 59, 7, 53 bytes, all 2026-09) gains no new member.
+
+- Machine: the owner's MacBook Pro (Apple M1 Pro), macOS, Python 3.14.6,
+  pyserial 3.5.
+- Port: `/dev/cu.usbserial-130` (the board's CP2102N), 1,144,744 baud. The
+  hub position differs from 2026-09-27 (`usbserial-1130`); the node answered
+  discover the same way: `HIT @ 1144744: status=0x04 (no key)`.
+- Node: `0x5452494e` (node0). No key at the start (power had cycled);
+  `--setkey` (op 0x02) loaded node0 and its ack tag verified under that key.
+  A pre-key conformance probe showed every y correct with `tag_ok=False`
+  under status 0x04 -- recorded as the unkeyed state, not as verification.
+- Harness: `c9b180bf7888e0702dc33a3765e8d5dfb0b3c131`. Self-test before the
+  runs: 18/18 `ok` (17 in September; the harness gained one control),
+  `self-test: PASS`.
+- `model.bin`: sha256 `3102abdf...a3ce9c` -- byte-identical to the
+  2026-09-27 run (same file, re-hashed today).
+- Log: `board_runs/2026-10-24-second-node.log` (2,790 bytes, under the 1 MB
+  bound). The node0 key (32 hex chars) has 0 hits in the log and 0 hits in
+  every file under `board_runs/`. A first key-scan probe reported "55 hits"
+  by matching an empty pattern (the keys file has two fields; the probe read
+  a third); the corrected probe reads field 2 and reports 0.
+
+**What this run does and does not claim.** The crystal computed all 42 ternary
+matrices of the model (wq, wk, wv, wo, gate, up, down across L0-L5) and every
+one of the 403,200 nonce-bound answers carried a tag that verified under the
+node0 key: a second node of THIS receipt family exists and reproduces
+verification without the host computing the answers. It does not by itself
+satisfy `t27os specs/os/lab.t27`'s "no second NODE has reproduced a receipt
+yet", which speaks of `t27c corpus-receipt` runs; closing THAT line needs a
+corpus receipt verified off the host (the #918 WASM interpreter board cell is
+the candidate path).
