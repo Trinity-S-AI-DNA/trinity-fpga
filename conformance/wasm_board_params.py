@@ -1,5 +1,6 @@
-# Transcribed from gHashTag/t27 specs/fpga/wasm_board_ax7203.t27, branch wasm-board,
-# commit 351e3cdf4 -- the spec is the source, this file is a copy of its constants.
+# Transcribed from gHashTag/t27 specs/fpga/wasm_board_ax7203.t27, MASTER
+# (the #9352+#9354 law: standard compare numbering) -- the spec is the source, this
+# file is a copy of its constants.
 # Not yet compiler-generated (the spec lives in the t27 repo, not here); every relation
 # the transcription must keep is asserted by wasm_board_vectors.check_params(), which
 # the vectors module runs on import and the runner's self-test exercises.
@@ -7,8 +8,8 @@
 
 SPEC_FILE = "specs/fpga/wasm_board_ax7203.t27"
 SPEC_REPO = "gHashTag/t27"
-SPEC_BRANCH = "wasm-board"
-SPEC_SHA256 = "d3b18e197cda742e0e22608e2021d23db320be5d800206c75bb2e94107954400"
+SPEC_BRANCH = "master"
+SPEC_SHA256 = "174da6b89a08fbdcefc0235f6ca3cfb36ae1fca2423ed6f8b99d9585a0b40129"
 
 # The ROM, byte for byte: 13 straight-line WASM bodies plus the illegal-opcode probe.
 # add_double, answer, xmul_not, sub_and_or, shl_sar, eq, ne, le_s, ge_s, eqz, gt_s,
