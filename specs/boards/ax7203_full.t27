@@ -46,4 +46,41 @@ board ax7203 {
     lanes  4
     gen    2
   }
+
+  # HDMI output surface (T27 OS on-board surface, t27os#3 task 8; M14 target).
+  # Video pins from the ALINX manual's own table; the encoder needs its IIC
+  # registers initialised by the FPGA before any TMDS leaves the chip, and
+  # its I2C pads ARE NOT in the manual's pin table (schematic-only, Figure
+  # 3-4-1) -- established = false until the ALINX demo project says
+  # otherwise. Never guess pins.
+  hdmi_out sil9134 {
+    encoder      SiI9134 (U18)     # HDMI/DVI tx up to 1080p60
+    iic_established false           # HDMI_SCL -> CSCL, HDMI_SDA <-> CSDA, pads not listed in the manual
+    pins {
+      idck    M13     # 9134_CLK    (pixel clock into the encoder, IDCK)
+      hsync   T15     # 9134_HS
+      vsync   T14     # 9134_VS
+      de      V13     # 9134_DE
+      reset_n J19     # 9134_nRESET (active low)
+      data    { V14 H14 J14 K13 K14 L13 L19 L20 K17 J17 L16 K16 L14 L15 M15 M16 L18 M18 N18 N19 M20 N20 L21 M21 }
+                      # 9134_D[0..23], RGB 24-bit parallel
+    }
+    max_mode "1080P@60Hz"
+    source "AX7203_User_Manual REV1.2 pp.40-41 (fetch verified 2026-10-24, sha256 771f0075 was the blocked fetch; final sha below)"
+  }
+
+  # HDMI input surface (SIL9013 decoder); video pins from the manual's table.
+  hdmi_in sil9013 {
+    encoder      SiL9013
+    iic_established false
+    pins {
+      idck    K21
+      hsync   K19
+      vsync   K18
+      de      H17
+      reset_n H19
+      data    { H18 N22 M22 K22 J22 H22 H20 G20 G22 G21 D22 E22 D21 E21 B21 A21 F21 M17 J16 F15 G17 G18 G15 G16 }
+    }
+    source "AX7203_User_Manual REV1.2 p.43"
+  }
 }
