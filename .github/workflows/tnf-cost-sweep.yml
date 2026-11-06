@@ -39,7 +39,10 @@ name: TNF cost sweep (E_t, M)
 # and the routing-limit risk is real -- the takum-class cells already fail
 # routing on this fabric with -flatten. Arms that fail routing are recorded as
 # [routing-pending], with the reason line and the nextpnr log attached, never as
-# zero and never as a defect.
+# zero and never as a defect. An arm whose nextpnr never reached the router is
+# not a routing result at all: it is recorded as harness-failure and fails the
+# job, because until 2026-10-05 exactly that kept this workflow green with no
+# arm ever routed.
 
 on:
   workflow_dispatch:
@@ -156,11 +159,16 @@ jobs:
         run: |
           mkdir -p build/tnfcost/chipdb
           docker run --rm -v "$PWD:/work" -w /work regymm/openxc7@sha256:eced1cdd4727549f2d983328e0cf170fb6f6f67d87f19b2bf24365163368c70c bash -c "cd /nextpnr-xilinx && python3 xilinx/python/bbaexport.py --device xc7a200tfbg484-2 --bba /work/build/tnfcost/chipdb/xc7a200tfbg484-2.bba && bbasm -l /work/build/tnfcost/chipdb/xc7a200tfbg484-2.bba /work/build/tnfcost/chipdb/xc7a200tfbg484-2.bin"
+      - name: Package pins from the pinned image
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work regymm/openxc7@sha256:eced1cdd4727549f2d983328e0cf170fb6f6f67d87f19b2bf24365163368c70c cp /nextpnr-xilinx/xilinx/external/prjxray-db/artix7/xc7a200tfbg484-2/package_pins.csv /work/build/tnfcost/package_pins.csv
+          python3 tools/sweep_pin_xdc.py --selftest
       - name: Place and route the Q1/Q2 arms
         run: |
           ARMS="${{ github.event.inputs.pnr_arms }}"
           [ -z "$ARMS" ] && ARMS="$PNR_DEFAULT"
           mkdir -p metrics
+          HARNESS_FAILED=""
           for TOP in $(echo "$ARMS" | tr ',' ' '); do
             CLEAN=0
             for CFG in "heap router1" "heap router2" "sa router2"; do
@@ -168,15 +176,24 @@ jobs:
               # W928: corona_decode_ax7203.xdc constrains a DIFFERENT top's
               # ports -- every arm died on "port clk of type PAD has no
               # IOSTANDARD" and the catch-all called it a fabric limit. Each
-              # arm now gets an XDC generated from its own yosys json: every
-              # top-level port gets IOSTANDARD LVCMOS33, indexed and base
-              # forms both, pads auto-placed (Fmax needs no LOCs).
-              python3 -c "$(printf 'import json, sys\ntop = sys.argv[1]\nd = json.load(open(\"build/tnfcost/%%s.json\" %% top))\nfor n, m in d[\"modules\"][top][\"ports\"].items():\n    b = m.get(\"bits\", [])\n    if len(b) <= 1:\n        print(\"set_property IOSTANDARD LVCMOS33 [get_ports %%s]\" %% n)\n    else:\n        for k in range(len(b)):\n            print(\"set_property IOSTANDARD LVCMOS33 [get_ports {%%s[%%d]}]\" %% (n, k))\n')" "$TOP" > /tmp/${TOP}.xdc
+              # arm now gets an XDC generated from its own yosys json.
+              # Two later defects, both fixed 2026-10-05 (tools/sweep_pin_xdc.py
+              # carries the detail):
+              #  - the XDC was written to the runner's /tmp, which the container
+              #    cannot see: run 37263184079 put e4m9 in routing-pending on
+              #    "failed to open XDC file" and the workflow stayed green. No
+              #    main run had routed an arm since W928. It now lives under
+              #    build/, which the container sees as /work/build.
+              #  - IOSTANDARD with the pads auto-placed let nextpnr put an output
+              #    on a GTP pad (run 34448747524, "No Bel named
+              #    OPAD_X0Y11/IOB33/OUTBUF"). Every port bit now gets a
+              #    PACKAGE_PIN on a general-purpose IOB, clk on an MRCC P pin.
+              python3 tools/sweep_pin_xdc.py build/tnfcost/${TOP}.json "$TOP" build/tnfcost/package_pins.csv build/tnfcost/${TOP}.xdc
               for s in 1 2 3 4; do
                 rm -f build/tnfcost/${TOP}_routed.json
                 docker run --rm -v "$PWD:/work" -w /work regymm/openxc7@sha256:eced1cdd4727549f2d983328e0cf170fb6f6f67d87f19b2bf24365163368c70c timeout --signal=KILL 1800 nextpnr-xilinx \
                   --chipdb /work/build/tnfcost/chipdb/xc7a200tfbg484-2.bin \
-                  --xdc /tmp/${TOP}.xdc \
+                  --xdc /work/build/tnfcost/${TOP}.xdc \
                   --json /work/build/tnfcost/${TOP}.json \
                   --write /work/build/tnfcost/${TOP}_routed.json \
                   --freq 50.0 --seed $s --placer $P --router $R --timing-allow-fail > /tmp/np_${TOP}.log 2>&1 || true
@@ -192,13 +209,22 @@ jobs:
               # line, infrastructure failures were indistinguishable from
               # fabric limits. Both now ship with the artefact.
               REASON=$(grep -m1 -E "ERROR|error:|Segmentation|Killed|failed" /tmp/np_${TOP}.log | cut -c1-200)
+              # A run that never reached the router cannot be a routing limit:
+              # the XDC, the pins or the placer stopped it, and that is the
+              # harness. Those fail the job -- a green sweep with no routed arm
+              # is what hid both 2026-10-05 defects.
+              reached_router=false
+              grep -qE "Info: Routing\.\.|Info: Running router2" /tmp/np_${TOP}.log && reached_router=true
+              STATUS=harness-failure
+              if [ "$reached_router" = true ]; then STATUS=routing-pending; fi
               {
                 echo "top=${TOP}"
-                echo "status=routing-pending"
+                echo "status=${STATUS}"
                 echo "reason=${REASON:-no-error-line-found}"
               } | tee metrics/${TOP}.pnr.txt
               cp /tmp/np_${TOP}.log metrics/${TOP}.nextpnr.log
-              echo "::warning::${TOP} routing-pending: ${REASON:-see log}"
+              echo "::warning::${TOP} ${STATUS}: ${REASON:-see log}"
+              if [ "$reached_router" = false ]; then HARNESS_FAILED="${HARNESS_FAILED} ${TOP}"; fi
               continue
             fi
             {
@@ -208,17 +234,24 @@ jobs:
               echo "luts=$(grep -E 'SLICE_LUTX' /tmp/np_${TOP}.log | tail -1 | grep -oE '[0-9]+/' | head -1 | tr -d /)"
               echo "ffs=$(grep -E 'SLICE_FFX' /tmp/np_${TOP}.log | tail -1 | grep -oE '[0-9]+/' | head -1 | tr -d /)"
               echo "fmax=$(grep -E 'Max frequency for clock' /tmp/np_${TOP}.log | tail -1 | sed 's/^.*: //')"
-              # Worst slack is reported against the nextpnr --freq target below,
-              # NOT against an XDC create_clock: corona_decode_ax7203.xdc carries
-              # pin constraints only. Recording the target with the slack is what
-              # makes the number readable.
+              # Fmax is judged against the nextpnr --freq target below, NOT an
+              # XDC create_clock: the sweep XDC carries pins and IOSTANDARD only.
+              # nextpnr-xilinx prints no worst-slack line, so none is recorded;
+              # crit_delay is the logic/routing split of the post-route critical
+              # path, which is what the Fmax line is computed from.
               echo "target_freq_mhz=50.0"
-              echo "wns=$(grep -E 'Max delay|worst slack|Slack' /tmp/np_${TOP}.log | tail -3 | tr '\n' ';')"
+              echo "crit_delay=$(grep -E 'ns logic, .* ns routing' /tmp/np_${TOP}.log | tail -1 | sed 's/^Info: //')"
               echo "crit_path=$(grep -E 'Critical path report|critical path' -A2 /tmp/np_${TOP}.log | tail -1)"
               echo "log_sha256=$(sha256sum /tmp/np_${TOP}.log | cut -d' ' -f1)"
             } | tee metrics/${TOP}.pnr.txt
             cp /tmp/np_${TOP}.log metrics/${TOP}.nextpnr.log
           done
+          harness_broken=false
+          [ -n "${HARNESS_FAILED}" ] && harness_broken=true
+          if [ "$harness_broken" = true ]; then
+            echo "::error::nextpnr never reached the router for:${HARNESS_FAILED}. That is the harness, not the fabric; metrics/*.nextpnr.log has the reason."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with: {name: tnfcost-pnr, path: metrics}
