@@ -4,7 +4,11 @@ name: LaTeX hygiene
 # \ref commands to the wrong theorems and tables while the build reported zero
 # errors and zero undefined references.
 
-on: [pull_request, push]
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   latex-hygiene:

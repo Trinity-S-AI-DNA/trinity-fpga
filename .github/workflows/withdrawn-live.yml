@@ -6,7 +6,11 @@ name: Withdrawn numbers
 # checked it -- the traceability gate asks whether a number appears in a data
 # file, which a withdrawn number does, having been measured once.
 
-on: [pull_request, push]
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   withdrawn-live:
