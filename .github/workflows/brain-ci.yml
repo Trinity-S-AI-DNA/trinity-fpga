@@ -63,15 +63,19 @@ jobs:
     if: needs.detect-build.outputs.present == 'true'
     timeout-minutes: 5
     steps:
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
+      # Checkout before setup-zig, in every job here. setup-zig restores its
+      # cache into $GITHUB_WORKSPACE/.zig-cache, and a later actions/checkout
+      # empties the workspace ("Deleting the contents of ..."), so with the
+      # old order every hit was deleted before a build used it (#844).
       - name: Checkout Trinity
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
 
       - name: Build TRI Binary
         # `tri-compile`, not `tri`: the `tri` step RUNS the CLI and installs
@@ -200,15 +204,15 @@ jobs:
     if: needs.detect-build.outputs.present == 'true'
     timeout-minutes: 5
     steps:
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
       - name: Checkout Trinity
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
 
       - name: Build TRI Binary
         # `tri-compile`, not `tri`: the `tri` step RUNS the CLI and installs
@@ -241,15 +245,19 @@ jobs:
           - intraparietal
           - hslm
     steps:
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
       - name: Checkout Trinity
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+          # One entry per region. Without it the five legs share one key: the
+          # first to finish saves, the other four are refused ("Unable to
+          # reserve cache"), and every leg restores that one region's build.
+          cache-key: ${{ matrix.region }}
 
       - name: Test ${{ matrix.region }}
         run: |
@@ -265,15 +273,15 @@ jobs:
     if: needs.detect-build.outputs.present == 'true'
     timeout-minutes: 10
     steps:
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
       - name: Checkout Trinity
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
 
       - name: Test Brain Integration
         run: |
@@ -289,15 +297,15 @@ jobs:
     if: needs.detect-build.outputs.present == 'true'
     timeout-minutes: 15
     steps:
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
       - name: Checkout Trinity
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
 
       - name: Run Stress Test
         id: stress
@@ -418,15 +426,15 @@ jobs:
     if: needs.detect-build.outputs.present == 'true'
     timeout-minutes: 5
     steps:
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
       - name: Checkout Trinity
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
 
       - name: Build TRI Binary
         # `tri-compile`, not `tri`: the `tri` step RUNS the CLI and installs
@@ -459,15 +467,15 @@ jobs:
     if: needs.detect-build.outputs.present == 'true'
     timeout-minutes: 5
     steps:
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
       - name: Checkout Trinity
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
 
       - name: Build TRI Binary
         # `tri-compile`, not `tri`: the `tri` step RUNS the CLI and installs
@@ -566,15 +574,15 @@ jobs:
     if: github.event_name == 'schedule'
     timeout-minutes: 10
     steps:
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
       - name: Checkout Trinity
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
 
       - name: Build TRI Binary
         # `tri-compile`, not `tri`: the `tri` step RUNS the CLI and installs
