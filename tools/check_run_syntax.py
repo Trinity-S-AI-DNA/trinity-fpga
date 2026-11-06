@@ -26,7 +26,13 @@ A `shell:` line that does not split into words is "cannot tell".
 
 `bash -n` reads syntax only: a script inside a quoted `bash -c '...'` argument
 is one string to it, so an error INSIDE that string is not seen -- unless, as
-in both cases above, it breaks the quoting of the outer script.
+in both cases above, it breaks the quoting of the outer script. So once the
+outer script parses, every single-quoted `bash -c '...'` / `sh -c '...'`
+argument in it (the `docker run ... bash -c '` scripts, 24 on main) is read
+out as the outer shell reads it -- `'\''` is a quote, and a splice of an outer
+value, `'"$PART"'` or `'$X'`, is one word -- and parsed with `bash -n` / `sh -n`
+in turn. A quote followed by anything else is "cannot tell". A double-quoted
+`bash -c "..."` is not read: the outer shell expands it first.
 
 Exit 0 clean, 1 a step that does not parse, 2 a workflow this could not read
 (cannot tell is not clean). tools/test_check_run_syntax.py plants every case.
@@ -165,7 +171,58 @@ def _shell_named(step: dict, job: dict, wf: dict) -> tuple[str, ...]:
     return ()  # pwsh, python, cmd, a custom shell: not ours to parse
 
 
+# `bash -c '`, `sh -lc '`, `bash -euo pipefail -c '`: the opening quote of a
+# script argument. `\b` keeps `zsh -c` and `fish -c` out.
+INNER_OPEN = re.compile(r"\b(bash|sh)(?:[ \t]+(?:-[a-zA-Z]*o[ \t]+[a-z]+|-[a-zA-Z]+))*?"
+                        r"[ \t]+-[a-zA-Z]*c[a-zA-Z]*[ \t]+'")
+# What may sit between a closing quote and the reopening one: an outer value.
+SPLICE = re.compile(r'"(?:[^"\\]|\\.)*"|\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*')
+# Stands in for a spliced value: bash -n needs a word there, not its contents.
+OUTER_VALUE = "__outer__"
+WORD_BREAK = " \t\n;|&)"
+# How many -c scripts check() parsed since main() started, for its summary line.
+_INNER_SEEN = 0
+
+
+def inner_scripts(script: str) -> list[tuple[str, str]]:
+    """(interpreter, text) of every single-quoted -c script argument in `script`."""
+    found = []
+    for m in INNER_OPEN.finditer(script):
+        i, buf = m.end(), []
+        while True:
+            j = script.find("'", i)
+            unclosed = j < 0
+            if unclosed:
+                raise CannotTell(f"a {m.group(1)} -c '...' script with no closing quote")
+            buf.append(script[i:j])
+            k = j + 1
+            escaped_quote = script.startswith("\\''", k)  # '\'' : a quote, then reopen
+            if escaped_quote:
+                buf.append("'")
+                i = k + 3
+                continue
+            spliced = False
+            s = SPLICE.match(script, k)
+            while s:
+                spliced = True
+                k = s.end()
+                s = SPLICE.match(script, k)
+            if spliced:
+                buf.append(OUTER_VALUE)
+            reopens = script.startswith("'", k)
+            if reopens:
+                i = k + 1
+                continue
+            ends = k == len(script) or script[k] in WORD_BREAK
+            if not ends:
+                raise CannotTell(f"a {m.group(1)} -c '...' script is glued to {script[k:k + 12]!r}")
+            break
+        found.append((m.group(1), "".join(buf)))
+    return found
+
+
 def check(path: pathlib.Path) -> tuple[list[str], str | None]:
+    global _INNER_SEEN
     import yaml  # inside: a missing PyYAML is "cannot tell", not a crash
     try:
         wf = yaml.safe_load(path.read_text())
@@ -186,13 +243,31 @@ def check(path: pathlib.Path) -> tuple[list[str], str | None]:
                 shells = shell_of(step, job, wf)
             except CannotTell as e:
                 return [], f"{path.name} :: {jn} :: step {k}: {e}"
+            where = f"{path.relative_to(ROOT)} :: {jn} :: {step.get('name') or f'step {k}'}"
+            outer_parses = bool(shells)
             for sh in shells:
                 r = subprocess.run([sh, "-n"], input=str(step["run"]), capture_output=True, text=True)
                 if r.returncode:
                     err = " ".join(r.stderr.split())[:240]
-                    bad.append(f"{path.relative_to(ROOT)} :: {jn} :: {step.get('name') or f'step {k}'}"
-                               f" [{sh} -n]\n    {err}")
+                    bad.append(f"{where} [{sh} -n]\n    {err}")
+                    outer_parses = False
                     break
+            # Only a script whose own quoting is sound can be read for the strings
+            # it hands to bash -c; a broken one was reported above.
+            if not outer_parses:
+                continue
+            try:
+                inner = inner_scripts(str(step["run"]))
+            except CannotTell as e:
+                return [], f"{path.name} :: {jn} :: step {k}: {e}"
+            _INNER_SEEN += len(inner)
+            for n, (ish, text) in enumerate(inner, 1):
+                r = subprocess.run([ish, "-n"], input=text, capture_output=True, text=True)
+                inner_bad = r.returncode != 0
+                if inner_bad:
+                    err = " ".join(r.stderr.split())[:240]
+                    bad.append(f"{where} [{ish} -n on {ish} -c script {n}, lines from its opening quote]"
+                               f"\n    {err}")
     return bad, None
 
 
@@ -206,6 +281,8 @@ def main() -> int:
         if not shutil.which(sh):
             print(f"cannot tell: no {sh} on PATH")
             return 2
+    global _INNER_SEEN
+    _INNER_SEEN = 0
     files = sorted(list(WORKFLOWS.glob("*.yml")) + list(WORKFLOWS.glob("*.yaml")))
     bad, unread = [], []
     for f in files:
@@ -213,7 +290,8 @@ def main() -> int:
         bad += b
         if err:
             unread.append(err)
-    print(f"workflows read: {len(files) - len(unread)} of {len(files)}; steps that do not parse: {len(bad)}")
+    print(f"workflows read: {len(files) - len(unread)} of {len(files)}; bash -c '...' scripts read out"
+          f" of them: {_INNER_SEEN}; steps and scripts that do not parse: {len(bad)}")
     for b in bad:
         print("  " + b)
     for u in unread:
