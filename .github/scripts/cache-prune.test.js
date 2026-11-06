@@ -3,12 +3,15 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { plan, run, seriesOf, prNumberOf } = require('./cache-prune.js');
+const { plan, run, seriesOf, prNumberOf, BUDGET_BYTES } = require('./cache-prune.js');
 
 const ZIG = 'setup-zig-cache-v2-brain_unit-zig-x86_64-linux-0.16.0-';
 let nextId = 1;
-function entry(ref, key, created, size = 100) {
-  return { id: nextId++, ref, key, created_at: created, size_in_bytes: size };
+function entry(ref, key, created, size = 100, accessed = undefined) {
+  const e = { id: nextId++, ref, key, created_at: created, size_in_bytes: size };
+  const read = accessed !== undefined;
+  if (read) e.last_accessed_at = accessed;
+  return e;
 }
 const ids = (list) => list.map((x) => (x.entry || x).id).sort((a, b) => a - b);
 
@@ -86,6 +89,72 @@ test('plan accounts for every entry exactly once', () => {
   assert.deepEqual([...ids(drop), ...ids(keep)].sort((a, b) => a - b), ids(all));
 });
 
+const CHIPDB = 'chipdb-xc7a200tfbg484-2-0123abc-bbasm-le-v1';
+
+test('over the budget, per-run entries off main go, least recently read first', () => {
+  const a = entry('refs/pull/852/merge', `${ZIG}-37000000001-1`, '2026-10-01T00:00:00Z', 100, '2026-10-04T03:00:00Z');
+  const b = entry('refs/heads/fix/x', `${ZIG}-37000000002-1`, '2026-10-02T00:00:00Z', 100, '2026-10-04T01:00:00Z');
+  const c = entry('refs/pull/853/merge', `${ZIG}-37000000003-1`, '2026-10-03T00:00:00Z', 100, '2026-10-04T02:00:00Z');
+  const { drop, keep } = plan([a, b, c], new Set(), new Set(), 150);
+  assert.deepEqual(ids(drop), ids([b, c]));
+  assert.deepEqual(ids(keep), ids([a]));
+  assert.match(drop[0].reason, /budget/);
+});
+
+test('the budget never drops a fixed key or an entry on main, even when still over', () => {
+  const chip = entry('refs/pull/852/merge', CHIPDB, '2026-10-01T00:00:00Z', 70, '2026-10-01T00:00:00Z');
+  const tar = entry('refs/heads/fix/x', 'setup-zig-tarball-x', '2026-10-01T00:00:00Z', 60, '2026-10-01T00:00:00Z');
+  const main = entry('refs/heads/main', `${ZIG}-37000000001-1`, '2026-10-01T00:00:00Z', 100, '2026-10-01T00:00:00Z');
+  const pr = entry('refs/pull/852/merge', `${ZIG}-37000000002-1`, '2026-10-05T00:00:00Z', 100, '2026-10-05T00:00:00Z');
+  const { drop, keep } = plan([chip, tar, main, pr], new Set(), new Set(), 10);
+  assert.deepEqual(ids(drop), ids([pr]));
+  assert.deepEqual(ids(keep), ids([chip, tar, main]));
+});
+
+// A chipdb keyed on its run id, as a branch saved on 2026-10-05.
+test('the budget never drops a chipdb, even one whose key ends in a run id', () => {
+  const chip = entry('refs/heads/fix/x', 'chipdb-xc7a200tfbg484-2-regymm-37246227964', '2026-10-01T00:00:00Z', 70, '2026-10-01T00:00:00Z');
+  const zig = entry('refs/heads/fix/x', `${ZIG}-37000000002-1`, '2026-10-05T00:00:00Z', 100, '2026-10-05T00:00:00Z');
+  assert.notEqual(seriesOf(chip.key), null);
+  const { drop, keep } = plan([chip, zig], new Set(), new Set(), 10);
+  assert.deepEqual(ids(drop), ids([zig]));
+  assert.deepEqual(ids(keep), ids([chip]));
+});
+
+test('the budget never drops a setup-zig cache key that has no run id', () => {
+  const fixed = entry('refs/heads/fix/x', `${ZIG}-pinned`, '2026-10-01T00:00:00Z', 70, '2026-10-01T00:00:00Z');
+  const zig = entry('refs/heads/fix/x', `${ZIG}-37000000002-1`, '2026-10-05T00:00:00Z', 100, '2026-10-05T00:00:00Z');
+  const { drop, keep } = plan([fixed, zig], new Set(), new Set(), 10);
+  assert.deepEqual(ids(drop), ids([zig]));
+  assert.deepEqual(ids(keep), ids([fixed]));
+});
+
+test('under the budget, the budget drops nothing', () => {
+  const a = entry('refs/pull/852/merge', `${ZIG}-37000000001-1`, '2026-10-01T00:00:00Z', 100);
+  const b = entry('refs/heads/fix/x', `${ZIG}-37000000002-1`, '2026-10-02T00:00:00Z', 100);
+  const { drop } = plan([a, b], new Set(), new Set(), 200);
+  assert.equal(drop.length, 0);
+});
+
+test('the last read decides, not the creation time', () => {
+  const oldButRead = entry('refs/pull/1/merge', `${ZIG}-37000000001-1`, '2026-09-01T00:00:00Z', 100, '2026-10-05T00:00:00Z');
+  const newButIdle = entry('refs/pull/2/merge', `${ZIG}-37000000002-1`, '2026-10-04T00:00:00Z', 100, '2026-10-04T00:00:00Z');
+  const { drop } = plan([oldButRead, newButIdle], new Set(), new Set(), 100);
+  assert.deepEqual(ids(drop), ids([newButIdle]));
+});
+
+test('with a budget, plan still accounts for every entry exactly once', () => {
+  const all = [
+    entry('refs/heads/main', `${ZIG}-37000000001-1`, '2026-10-01T00:00:00Z'),
+    entry('refs/heads/main', `${ZIG}-37000000002-1`, '2026-10-02T00:00:00Z'),
+    entry('refs/pull/1/merge', `${ZIG}-37000000002-1`, '2026-10-02T00:00:00Z'),
+    entry('refs/pull/2/merge', `${ZIG}-37000000002-1`, '2026-10-02T00:00:00Z'),
+    entry('refs/pull/2/merge', CHIPDB, '2026-10-02T00:00:00Z'),
+  ];
+  const { drop, keep } = plan(all, new Set([1]), new Set(), 150);
+  assert.deepEqual([...ids(drop), ...ids(keep)].sort((a, b) => a - b), ids(all));
+});
+
 // A stand-in for the github-script client: enough of octokit for run().
 function fakeGithub(caches, { closed = [], gone = [], deleteStatus = {} } = {}) {
   const deleted = [];
@@ -149,6 +218,26 @@ test('a real run deletes exactly what plan drops', async () => {
   const [pr, mainOld, , gone] = caches;
   assert.deepEqual(github.deleted.sort((a, b) => a - b), ids([pr, mainOld, gone]));
   assert.equal(core.failed, null);
+});
+
+test('run passes its budget to plan, and defaults to BUDGET_BYTES', async () => {
+  const open = (size) => [
+    entry('refs/pull/852/merge', `${ZIG}-37000000001-1`, '2026-10-01T00:00:00Z', size),
+    entry('refs/heads/main', `${ZIG}-37000000001-1`, '2026-10-01T00:00:00Z', size),
+  ];
+  const tight = open(100);
+  const g1 = fakeGithub(tight);
+  await run({ github: g1, context, core: fakeCore(), dryRun: false, budget: 0 });
+  assert.deepEqual(g1.deleted, ids([tight[0]]));
+  const g2 = fakeGithub(open(100));
+  await run({ github: g2, context, core: fakeCore(), dryRun: false });
+  assert.deepEqual(g2.deleted, []);
+  // 2 x 5 GB is over the default 8 GB, so the default budget drops the pull request's entry.
+  const big = open(5e9);
+  const g3 = fakeGithub(big);
+  await run({ github: g3, context, core: fakeCore(), dryRun: false });
+  assert.deepEqual(g3.deleted, ids([big[0]]));
+  assert.equal(BUDGET_BYTES, 8e9);
 });
 
 test('an entry already deleted by someone else is not a failure', async () => {

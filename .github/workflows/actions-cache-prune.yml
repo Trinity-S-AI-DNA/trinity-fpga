@@ -11,10 +11,19 @@ name: actions-cache-prune
 # The rules live in .github/scripts/cache-prune.js and are tested by
 # .github/scripts/cache-prune.test.js, which this job runs before it deletes
 # anything.
+#
+# The hourly schedule alone was not enough: between this workflow's merge
+# (2026-10-04 18:41Z) and 03:46Z it started 2 runs in 9 slots, and the cache
+# went from 7.97 GB kept to over 11 GB. So it also runs after the two
+# workflows that save the most (brain-ci 8.59 GB and CI 1.85 GB of 10.84 GB on
+# 2026-10-05). The concurrency group below holds at most one pending run.
 
 on:
   pull_request:
     types: [closed]
+  workflow_run:
+    workflows: ['S³AI Brain CI — "Functional MRI" Gate', CI]
+    types: [completed]
   schedule:
     - cron: '41 * * * *'
   workflow_dispatch:

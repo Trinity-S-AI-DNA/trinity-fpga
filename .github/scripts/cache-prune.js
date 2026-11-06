@@ -13,11 +13,27 @@
 //
 // Everything else is kept: fixed keys (setup-zig-tarball-*, the chipdb keyed on
 // part + image) and the newest entry of every series on every live ref.
+//
+// Then a budget. The newest entry of every series on every open pull request
+// and its branch still came to 7.97 GB (130 entries) on 2026-10-05, and the
+// saves between two prunes took the repository past 10 GB, where GitHub evicts
+// whatever was read least recently, fixed keys included. The chipdb on a
+// branch was gone within a day. So while the kept entries are over
+// BUDGET_BYTES, setup-zig's per-run entries on refs other than main are
+// dropped, least recently read first. Nothing else is dropped for the budget,
+// including a chipdb whose key ends in a run id: a chipdb hit saves about
+// three minutes of build, a Zig cache hit tens of seconds at most.
 
 'use strict';
 
+// Under GitHub's 10 GB, with room for the saves of a few runs between prunes.
+const BUDGET_BYTES = 8e9;
+
 // A run id (8 or more digits) at the end of a key, with an optional attempt.
 const RUN_SUFFIX = /-\d{8,}(?:-\d+)?$/;
+
+// What mlugg/setup-zig saves on every run; the only entries the budget spends.
+const ZIG_CACHE = 'setup-zig-cache-';
 
 // The key with its run id removed, or null when the key is fixed.
 function seriesOf(key) {
@@ -39,11 +55,16 @@ function newestFirst(a, b) {
   return a.created_at < b.created_at ? 1 : -1;
 }
 
-// caches:   [{id, key, ref, size_in_bytes, created_at}] as the REST API returns them
+function lastRead(c) {
+  return c.last_accessed_at || c.created_at;
+}
+
+// caches:   [{id, key, ref, size_in_bytes, created_at, last_accessed_at}] as the REST API returns them
 // closed:   Set of pull request numbers that are closed
 // goneRefs: Set of branch refs (refs/heads/...) that no longer exist
+// budget:   bytes the kept entries may take; see BUDGET_BYTES
 // Returns {drop: [{entry, reason}], keep: [entry]}.
-function plan(caches, closed, goneRefs) {
+function plan(caches, closed, goneRefs, budget = Infinity) {
   const drop = [];
   const keep = [];
   const series = new Map();
@@ -78,7 +99,20 @@ function plan(caches, closed, goneRefs) {
       drop.push({ entry: c, reason: `superseded by ${newest} on ${slot.split('\n')[0]}` });
     }
   }
-  return { drop, keep };
+
+  let kept = bytes(keep);
+  const spendable = keep
+    .filter((c) => c.key.startsWith(ZIG_CACHE) && seriesOf(c.key) !== null && c.ref !== 'refs/heads/main')
+    .sort((a, b) => (lastRead(a) < lastRead(b) ? -1 : lastRead(a) > lastRead(b) ? 1 : a.id - b.id));
+  const over = new Set();
+  for (const c of spendable) {
+    const fits = kept <= budget;
+    if (fits) break;
+    over.add(c);
+    kept -= c.size_in_bytes;
+    drop.push({ entry: c, reason: `over the ${gb(budget)} GB budget, last read ${lastRead(c)}` });
+  }
+  return { drop, keep: keep.filter((c) => !over.has(c)) };
 }
 
 function bytes(list) {
@@ -89,7 +123,7 @@ function gb(n) {
   return (n / 1e9).toFixed(2);
 }
 
-async function run({ github, context, core, dryRun }) {
+async function run({ github, context, core, dryRun, budget = BUDGET_BYTES }) {
   const { owner, repo } = context.repo;
   const caches = await github.paginate(github.rest.actions.getActionsCacheList, {
     owner, repo, per_page: 100,
@@ -116,10 +150,10 @@ async function run({ github, context, core, dryRun }) {
     }
   }
 
-  const { drop, keep } = plan(caches, closed, goneRefs);
+  const { drop, keep } = plan(caches, closed, goneRefs, budget);
   core.info(`${caches.length} entries, ${gb(bytes(caches))} GB; ` +
-    `drop ${drop.length} (${gb(bytes(drop.map((d) => d.entry)))} GB), keep ${keep.length} (${gb(bytes(keep))} GB)` +
-    (dryRun ? ' [dry run]' : ''));
+    `drop ${drop.length} (${gb(bytes(drop.map((d) => d.entry)))} GB), keep ${keep.length} (${gb(bytes(keep))} GB), ` +
+    `budget ${gb(budget)} GB` + (dryRun ? ' [dry run]' : ''));
 
   let deleted = 0;
   let deletedBytes = 0;
@@ -152,4 +186,4 @@ async function run({ github, context, core, dryRun }) {
   if (failed > 0) core.setFailed(`${failed} cache entries could not be deleted`);
 }
 
-module.exports = { plan, run, seriesOf, prNumberOf };
+module.exports = { plan, run, seriesOf, prNumberOf, BUDGET_BYTES };
