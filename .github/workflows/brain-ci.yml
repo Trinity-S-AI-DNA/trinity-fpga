@@ -184,11 +184,10 @@ jobs:
               });
             }
 
-      - name: Record Health Snapshot
-        if: always()
-        run: |
-          ./zig-out/bin/tri stress --record || echo "Health record skipped"
-          echo "X Health snapshot recorded to Hippocampus" >> $GITHUB_STEP_SUMMARY
+      # No "Record Health Snapshot" step: it ran `tri stress --record`, which is
+      # NotImplemented (src/tri/tri_commands.zig, runStressTestCommand), hid
+      # that with `|| echo`, and then wrote "Health snapshot recorded" to the
+      # summary on every run. Nothing was ever recorded. #879.
 
   # =========================================================================
   # Phase 1: Build Check (compile validation)
@@ -390,10 +389,9 @@ jobs:
       - name: Record Stress Test Result
         if: always()
         run: |
-          # Record to Hippocampus
-          ./zig-out/bin/tri stress --record || echo "Record skipped"
-
-          # Upload stress test output
+          # `tri stress --record` used to run here behind `|| echo "Record
+          # skipped"`. This job builds no tri binary, and the mode is
+          # NotImplemented anyway, so it was a no-op on every run. #879.
           echo "## 🧪 Stress Test Output" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           cat /tmp/stress-output.txt >> $GITHUB_STEP_SUMMARY
@@ -563,7 +561,10 @@ jobs:
   brain-trend-report:
     name: 📈 Weekly Brain Trend Report
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
+    # Red on 2 of 2 scheduled runs (2026-09-27, 2026-10-04) and seen by no one:
+    # a job that only a schedule can start cannot be checked by its own fix.
+    # workflow_dispatch lets a branch run it on demand. #879.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
     steps:
       - name: Setup Zig
@@ -582,13 +583,26 @@ jobs:
         run: |
           zig build tri-compile -Dci=true
 
+      # `shell: bash` is `-eo pipefail`: without it `| tee` reports tee's exit
+      # code, and a failing stress test ended green here.
+      #
+      # Every passing run also prints "failed command: .../test ...". That is
+      # not a failure: zig 0.16's build runner prints a step's stderr, and the
+      # command line with it, "no matter the result" (build_runner.zig). The
+      # stress benchmarks write their OP/s lines to stderr.
       - name: Run Full Stress Test
+        shell: bash
         run: |
           zig build test-brain-stress -Dci=true 2>&1 | tee /tmp/weekly-stress.txt
 
-      - name: Record Weekly Snapshot
+      # This step used to run `tri stress --record`, which is NotImplemented
+      # (src/tri/tri_commands.zig, runStressTestCommand) and failed the job on
+      # every scheduled run. `--health` is the stress mode that exists: four
+      # in-process probes, a Score: line, exit 1 below 80. #879.
+      - name: Weekly Health Score
+        shell: bash
         run: |
-          ./zig-out/bin/tri stress --record
+          ./zig-out/bin/tri stress --health 2>&1 | tee /tmp/weekly-health.txt
 
       - name: Generate Trend Report
         run: |
@@ -601,17 +615,21 @@ jobs:
           cat /tmp/weekly-stress.txt >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Health History" >> $GITHUB_STEP_SUMMARY
+          echo "## Health Score" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          ./zig-out/bin/tri stress --history 2>&1 || echo "No history available" >> $GITHUB_STEP_SUMMARY
+          cat /tmp/weekly-health.txt >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No week-over-week history: \`tri stress --record\` and \`--history\` are not implemented (#879)." >> $GITHUB_STEP_SUMMARY
 
       - name: Upload Weekly Report
         uses: actions/upload-artifact@v4
         with:
-          name: weekly-brain-report-$(date +%Y%m%d)
+          # `with:` is not a shell: `$(date +%Y%m%d)` here was a literal name.
+          name: weekly-brain-report-${{ github.run_id }}
           path: |
             /tmp/weekly-stress.txt
+            /tmp/weekly-health.txt
             .trinity/brain_health_history.jsonl
           retention-days: 365
 
