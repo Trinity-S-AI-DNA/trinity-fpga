@@ -4,6 +4,7 @@ name: Run syntax gate
 # parse each time they were dispatched, and nothing said so until one was run:
 # an apostrophe in a comment inside `bash -c '...'` (build-matrix) and a `'\''`
 # used outside single quotes (iddr-golden-diff). See tools/check_run_syntax.py.
+# The run steps of composite actions under .github/actions/ are read too.
 
 on:
   push:
