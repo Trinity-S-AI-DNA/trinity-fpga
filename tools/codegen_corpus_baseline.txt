@@ -79,16 +79,6 @@ specs/crypto/gf256.tri
 specs/depin/multi-cluster-live-v2.tri
 specs/depin/real-network-v1.tri
 specs/format/tri27_loader.tri
-specs/fpga/blink.tri
-specs/fpga/counter.tri
-specs/fpga/fsm_simple.tri
-specs/fpga/test_blink.tri
-specs/fpga/test_counter.tri
-specs/fpga/test_debouncer.tri
-specs/fpga/test_multi_led.tri
-specs/fpga/test_pwm.tri
-specs/fpga/test_shift_register.tri
-specs/fpga/test_values.tri
 specs/infra/build-purge-v2.tri
 specs/infra/build-transcendence-v1.tri
 specs/koschei/vsa_fpga_week2.tri
@@ -164,7 +154,6 @@ specs/tri/benchmark_runner.vibee
 specs/tri/benchmarks_603x_final.vibee
 specs/tri/benchmarks_v7.vibee
 specs/tri/bitnet_inference.vibee
-specs/tri/bitnet_mac.vibee
 specs/tri/black_hole_information.tri
 specs/tri/blind_spots_discovery.vibee
 specs/tri/bootstrap/impl_block_demo.tri
@@ -303,9 +292,6 @@ specs/tri/fluent_general_chat.vibee
 specs/tri/formatters.vibee
 specs/tri/formula_discovery_engine.tri
 specs/tri/forward_pass.vibee
-specs/tri/fpga/bitnet_mac.vibee
-specs/tri/fpga/trinity_ai_core.vibee
-specs/tri/fpga/trit_alu.vibee
 specs/tri/full_autonomous.vibee
 specs/tri/full_autonomous_sacred_evolution__autogit_commits__ml_patch_optimization__production_dashboard_deployment__selfhosting_loop.vibee
 specs/tri/generation_pipeline.vibee
@@ -367,7 +353,6 @@ specs/tri/local_llm_fallback.vibee
 specs/tri/logger.vibee
 specs/tri/logging_middleware.vibee
 specs/tri/long_context_e2e.vibee
-specs/tri/long_context_system.vibee
 specs/tri/mac_simulation.vibee
 specs/tri/main_menu.vibee
 specs/tri/make_sacred_intelligence_the_default_brain_of_tri_cli__live_dashboard__selfevolving_agent.vibee
@@ -713,10 +698,8 @@ specs/tri/tri_vsa.tri
 specs/tri/tri_xml.tri
 specs/tri/tri_zenodo.tri
 specs/tri/trinity.tri
-specs/tri/trinity_ai_core.vibee
 specs/tri/trinity_menu_system.vibee
 specs/tri/trinity_omega_awakening__full_selfawareness__multiagent_sacred_swarm__eternal_evolution_loop__sacred_governance.vibee
-specs/tri/trit_alu.vibee
 specs/tri/tvc_integrated_system.vibee
 specs/tri/tvc_science.vibee
 specs/tri/tvc_service/tvc_http_api.tri
@@ -779,8 +762,6 @@ specs/tri_trie.tri
 specs/trinet/trinet_node.tri
 specs/trinity/vsa_fpga_week2.tri
 specs/trinity/vsa_fpga_week3.tri
-specs/uart/uart_mode_controller.tri
-specs/uart/vsa_uart_operations.tri
 specs/vibee/self-mod-v1.tri
 specs/vibeec/emitter.tri
 specs/vibeec/parser.tri

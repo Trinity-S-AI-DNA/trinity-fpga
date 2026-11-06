@@ -50,8 +50,14 @@ jobs:
           tar xf zig.tar.xz
           echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> $GITHUB_PATH
 
+      # vibee_gen is built for the runner's native CPU (standardTargetOptions),
+      # so the CPU is part of what a codegen-corpus run measured. Two runs of
+      # one commit disagreed (e6eac0900: red on push, green on schedule); the
+      # model name is the cheapest thing to have on record next time.
       - name: zig version
-        run: zig version
+        run: |
+          zig version
+          grep -m1 'model name' /proc/cpuinfo || true
 
       # One question per step. The previous version asked "does it build and
       # generate and test" with a single exit code, so a compile error and a
