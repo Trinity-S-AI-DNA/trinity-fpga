@@ -25,16 +25,11 @@ jobs:
             synth_xilinx -flatten -abc9 -nocarry -nodsp -arch xc7 -top gf16_mul_ax7203;
             setundef -zero -params; write_json build/gf16_mul/gf16_mul_ax7203.json" 2>&1 | tee /tmp/yosys.log
           grep -E "Estimated|ERROR" /tmp/yosys.log
-      - uses: actions/cache@v4
-        id: chipdb
+      - id: chipdb
+        uses: ./.github/actions/openxc7-chipdb
         with:
-          path: build/gf16_mul/chipdb/xc7a200tfbg484-2.bin
-          key: chipdb-xc7a200tfbg484-2-regymm-${{ github.run_id }}
-          restore-keys: chipdb-xc7a200tfbg484-2-regymm-
-      - if: steps.chipdb.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p build/gf16_mul/chipdb
-          docker run --rm -v "$PWD:/work" -w /work regymm/openxc7 bash -c "cd /nextpnr-xilinx && python3 xilinx/python/bbaexport.py --device xc7a200tfbg484-2 --bba /work/build/gf16_mul/chipdb/xc7a200tfbg484-2.bba && bbasm -l /work/build/gf16_mul/chipdb/xc7a200tfbg484-2.bba /work/build/gf16_mul/chipdb/xc7a200tfbg484-2.bin"
+          part: xc7a200tfbg484-2
+          out: build/gf16_mul/chipdb/xc7a200tfbg484-2.bin
       - name: nextpnr (seed search — placer heap + per-seed timeout, lessons from gf20)
         run: |
           # --placer heap, not sa (#862). The step name already said heap; the flag did not. SA leaves invalid

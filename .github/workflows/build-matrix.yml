@@ -52,25 +52,12 @@ jobs:
         with:
           submodules: true
 
-      - name: Generate chipdb cache
-        id: chipdb
-        uses: actions/cache@v4
+      - id: chipdb
+        uses: ./.github/actions/openxc7-chipdb
         with:
-          path: chipdb-xc7a200tfbg484-2.bin
-          key: chipdb-xc7a200tfbg484-2-v2
-
-      - name: Build chipdb (if not cached)
-        if: steps.chipdb.outputs.cache-hit != 'true'
-        run: |
-          docker run --rm -v "$(pwd):/github" regymm/openxc7:latest bash -c '
-          cd /nextpnr-xilinx/xilinx &&
-          python3 python/bbaexport.py \
-            --xray /nextpnr-xilinx/xilinx/external/prjxray-db/artix7 \
-            --metadata /nextpnr-xilinx/xilinx/external/nextpnr-xilinx-meta/artix7 \
-            --device xc7a200tfbg484-2 \
-            --constids /nextpnr-xilinx/xilinx/constids.inc \
-            --bba /tmp/chipdb.bba &&
-          bbasm --le /tmp/chipdb.bba /github/chipdb-xc7a200tfbg484-2.bin'
+          part: xc7a200tfbg484-2
+          out: chipdb-xc7a200tfbg484-2.bin
+          image: regymm/openxc7:latest
 
       - name: Full bitstream build
         run: |

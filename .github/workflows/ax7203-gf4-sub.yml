@@ -25,16 +25,11 @@ jobs:
             synth_xilinx -flatten -abc9 -nocarry -arch xc7 -top gf4_sub_ax7203;
             setundef -zero -params; write_json build/gf4_sub/gf4_sub_ax7203.json" 2>&1 | tee /tmp/yosys.log
           grep -E "Estimated|ERROR" /tmp/yosys.log
-      - uses: actions/cache@v4
-        id: chipdb
+      - id: chipdb
+        uses: ./.github/actions/openxc7-chipdb
         with:
-          path: build/gf4_sub/chipdb/xc7a200tfbg484-2.bin
-          key: chipdb-xc7a200tfbg484-2-regymm-${{ github.run_id }}
-          restore-keys: chipdb-xc7a200tfbg484-2-regymm-
-      - if: steps.chipdb.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p build/gf4_sub/chipdb
-          docker run --rm -v "$PWD:/work" -w /work regymm/openxc7 bash -c "cd /nextpnr-xilinx && python3 xilinx/python/bbaexport.py --device xc7a200tfbg484-2 --bba /work/build/gf4_sub/chipdb/xc7a200tfbg484-2.bba && bbasm -l /work/build/gf4_sub/chipdb/xc7a200tfbg484-2.bba /work/build/gf4_sub/chipdb/xc7a200tfbg484-2.bin"
+          part: xc7a200tfbg484-2
+          out: build/gf4_sub/chipdb/xc7a200tfbg484-2.bin
       - name: nextpnr (seed search)
         run: |
           CLEAN=0; for s in 1 2 3 4 5 6 7 8; do

@@ -49,16 +49,11 @@ jobs:
             exit 1
           fi
           echo "zero-multiplier discipline: no DSP48 cells inferred"
-      - uses: actions/cache@v4
-        id: chipdb
+      - id: chipdb
+        uses: ./.github/actions/openxc7-chipdb
         with:
-          path: build/trinet_dna_probe/chipdb/xc7a200tfbg484-2.bin
-          key: chipdb-xc7a200tfbg484-2-regymm-${{ github.run_id }}
-          restore-keys: chipdb-xc7a200tfbg484-2-regymm-
-      - if: steps.chipdb.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p build/trinet_dna_probe/chipdb
-          docker run --rm -v "$PWD:/work" -w /work regymm/openxc7 bash -c "cd /nextpnr-xilinx && python3 xilinx/python/bbaexport.py --device xc7a200tfbg484-2 --bba /work/build/trinet_dna_probe/chipdb/xc7a200tfbg484-2.bba && bbasm -l /work/build/trinet_dna_probe/chipdb/xc7a200tfbg484-2.bba /work/build/trinet_dna_probe/chipdb/xc7a200tfbg484-2.bin"
+          part: xc7a200tfbg484-2
+          out: build/trinet_dna_probe/chipdb/xc7a200tfbg484-2.bin
       - name: nextpnr (heap + sa seed search — the recipe large datapaths need)
         run: |
           CLEAN="";

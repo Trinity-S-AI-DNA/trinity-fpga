@@ -43,28 +43,11 @@ jobs:
             " 2>&1 | tee /tmp/yosys.log
           grep -E "Estimated number of LCs|ERROR" /tmp/yosys.log
 
-      - name: Cache chipdb for xc7a200tfbg484-2
-        id: chipdb-cache
-        uses: actions/cache@v4
+      - id: chipdb-cache
+        uses: ./.github/actions/openxc7-chipdb
         with:
-          path: build/ax7203_loopback/chipdb/xc7a200tfbg484-2.bin
-          key: chipdb-xc7a200tfbg484-2-regymm-openxc7-${{ github.run_id }}
-          restore-keys: |
-            chipdb-xc7a200tfbg484-2-regymm-openxc7-
-
-      - name: Generate chipdb for xc7a200tfbg484-2
-        if: steps.chipdb-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p build/ax7203_loopback/chipdb
-          docker run --rm \
-            -v "$PWD:/work" -w /work \
-            regymm/openxc7 \
-            bash -c "
-              cd /nextpnr-xilinx && \
-              python3 xilinx/python/bbaexport.py --device xc7a200tfbg484-2 --bba /work/build/ax7203_loopback/chipdb/xc7a200tfbg484-2.bba && \
-              bbasm -l /work/build/ax7203_loopback/chipdb/xc7a200tfbg484-2.bba /work/build/ax7203_loopback/chipdb/xc7a200tfbg484-2.bin
-            "
-          ls -lh build/ax7203_loopback/chipdb/xc7a200tfbg484-2.bin
+          part: xc7a200tfbg484-2
+          out: build/ax7203_loopback/chipdb/xc7a200tfbg484-2.bin
 
       - name: nextpnr place and route (seed search for a clean $PACKER_VCC_NET route)
         run: |

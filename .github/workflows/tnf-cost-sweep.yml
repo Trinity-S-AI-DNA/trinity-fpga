@@ -145,17 +145,12 @@ jobs:
       - name: Docker pull
         run: |
           for i in 1 2 3 4 5 6; do docker pull regymm/openxc7@sha256:eced1cdd4727549f2d983328e0cf170fb6f6f67d87f19b2bf24365163368c70c && break; sleep $((i*20)); done
-      - uses: actions/cache@v4
-        id: chipdb
+      - id: chipdb
+        uses: ./.github/actions/openxc7-chipdb
         with:
-          path: build/tnfcost/chipdb/xc7a200tfbg484-2.bin
-          key: chipdb-xc7a200tfbg484-2-regymm-${{ github.run_id }}
-          restore-keys: chipdb-xc7a200tfbg484-2-regymm-
-      - if: steps.chipdb.outputs.cache-hit != 'true'
-        name: Build chipdb
-        run: |
-          mkdir -p build/tnfcost/chipdb
-          docker run --rm -v "$PWD:/work" -w /work regymm/openxc7@sha256:eced1cdd4727549f2d983328e0cf170fb6f6f67d87f19b2bf24365163368c70c bash -c "cd /nextpnr-xilinx && python3 xilinx/python/bbaexport.py --device xc7a200tfbg484-2 --bba /work/build/tnfcost/chipdb/xc7a200tfbg484-2.bba && bbasm -l /work/build/tnfcost/chipdb/xc7a200tfbg484-2.bba /work/build/tnfcost/chipdb/xc7a200tfbg484-2.bin"
+          part: xc7a200tfbg484-2
+          out: build/tnfcost/chipdb/xc7a200tfbg484-2.bin
+          image: regymm/openxc7@sha256:eced1cdd4727549f2d983328e0cf170fb6f6f67d87f19b2bf24365163368c70c
       - name: Place and route the Q1/Q2 arms
         run: |
           ARMS="${{ github.event.inputs.pnr_arms }}"

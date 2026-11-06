@@ -1,0 +1,103 @@
+name: openXC7 chipdb
+description: >-
+  Restore, or build and save, the nextpnr-xilinx chipdb for one part. The cache
+  key is the part plus the ID of the image that builds it, so it hits on every
+  run that uses the same image and misses exactly when the image moves.
+  gHashTag/trinity-fpga#843.
+
+# Why the key looks like this.
+#
+# A chipdb is a pure function of the part and of the nextpnr-xilinx and
+# prjxray-db trees inside the image, so the image ID is a sufficient key.
+#
+# - A key carrying github.run_id never matches exactly. actions/cache sets
+#   cache-hit only on an exact match (a restore-keys match leaves it false), so
+#   `if: cache-hit != 'true'` rebuilt the chipdb on every run.
+# - A fixed key on a floating tag never misses, and keeps serving a chipdb built
+#   by an image the job no longer runs.
+#
+# The cached path is the same for every workflow (~/.cache/openxc7-chipdb/<part>.bin)
+# and is copied to `out` afterwards. actions/cache folds the path list into the
+# entry's version, so caching `out` directly would give each of the ~50 workflows
+# its own copy of an identical file.
+#
+# The chipdb is saved straight after it is built, not in a post-job step, so a
+# later nextpnr failure does not throw the build away.
+#
+# Caches are scoped by ref: an entry saved on main is visible to every branch and
+# PR, an entry saved in a PR only to that PR.
+
+inputs:
+  part:
+    description: Xilinx part, e.g. xc7a200tfbg484-2
+    default: xc7a200tfbg484-2
+  out:
+    description: Path of the chipdb .bin to produce, relative to the workspace
+    required: true
+  image:
+    description: The openXC7 image the job's nextpnr step runs (tag or digest)
+    default: regymm/openxc7
+
+outputs:
+  cache-hit:
+    description: "'true' when the chipdb came from the cache"
+    value: ${{ steps.restore.outputs.cache-hit }}
+  image-id:
+    description: ID of the image the chipdb belongs to
+    value: ${{ steps.ident.outputs.image-id }}
+  key:
+    description: The cache key used
+    value: ${{ steps.ident.outputs.key }}
+
+runs:
+  using: composite
+  steps:
+    - id: ident
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        PART: ${{ inputs.part }}
+      run: |
+        # Use the image already on the runner if a previous step pulled it, so
+        # the chipdb and the job's nextpnr come from the same image.
+        present=false
+        docker image inspect "$IMAGE" >/dev/null 2>&1 && present=true
+        if [ "$present" = false ]; then docker pull -q "$IMAGE" >/dev/null; fi
+        image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE")
+        key="chipdb-$PART-${image_id#sha256:}-bbasm-le-v1"
+        echo "image-id=$image_id" >> "$GITHUB_OUTPUT"
+        echo "key=$key" >> "$GITHUB_OUTPUT"
+        echo "chipdb key $key ($IMAGE)"
+
+    - id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.cache/openxc7-chipdb/${{ inputs.part }}.bin
+        key: ${{ steps.ident.outputs.key }}
+
+    - if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        IMAGE_ID: ${{ steps.ident.outputs.image-id }}
+        PART: ${{ inputs.part }}
+      run: |
+        mkdir -p ~/.cache/openxc7-chipdb
+        docker run --rm -v "$HOME/.cache/openxc7-chipdb:/chipdb" "$IMAGE_ID" bash -c "cd /nextpnr-xilinx && \
+          python3 xilinx/python/bbaexport.py --device $PART --bba /chipdb/$PART.bba && \
+          bbasm -l /chipdb/$PART.bba /chipdb/$PART.bin && rm -f /chipdb/$PART.bba"
+
+    - if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/openxc7-chipdb/${{ inputs.part }}.bin
+        key: ${{ steps.ident.outputs.key }}
+
+    - shell: bash
+      env:
+        PART: ${{ inputs.part }}
+        OUT: ${{ inputs.out }}
+        HIT: ${{ steps.restore.outputs.cache-hit }}
+      run: |
+        mkdir -p "$(dirname "$OUT")"
+        cp -f "$HOME/.cache/openxc7-chipdb/$PART.bin" "$OUT"
+        echo "chipdb $OUT  $(stat -c %s "$OUT") bytes  cache-hit=${HIT:-false}"
