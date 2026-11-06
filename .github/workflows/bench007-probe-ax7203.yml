@@ -33,9 +33,13 @@ on:
 permissions:
   contents: read
 
+# A newer push replaces this file's pending run instead of queueing behind it;
+# a dispatch is never cancelled (gHashTag/trinity-fpga#869). The old group,
+# bench007-probe-<ref> with cancel-in-progress, let a push to main kill a
+# dispatched bitstream build up to four hours in.
 concurrency:
-  group: bench007-probe-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow_ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   bitstream:
