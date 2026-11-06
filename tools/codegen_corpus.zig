@@ -156,6 +156,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     // The compile sample: what ast-check cannot see. Arity, types, members.
     var compiled: usize = 0;
     var compile_failed: usize = 0;
+    var could_not_run: usize = 0;
     const sample = @min(compile_sample, clean.items.len);
     // Even stride, not a prefix: the clean list is sorted by path, so the
     // first N are all from one directory.
@@ -171,24 +172,36 @@ pub fn main(init: std.process.Init.Minimal) !void {
     for (picked.items) |spec| {
         const dest = try outPathFor(gpa, spec);
         defer gpa.free(dest);
-        if (try zigTestOk(gpa, io, dest)) {
-            compiled += 1;
-        } else {
-            std.debug.print("  DOES NOT COMPILE: {s} (ast-check passed it)\n", .{spec});
-            compile_failed += 1;
+        switch (zigTest(gpa, io, "zig", dest, spec)) {
+            .compiled => compiled += 1,
+            .does_not_compile => compile_failed += 1,
+            .could_not_run => could_not_run += 1,
         }
     }
 
-    if (regressed > 0 or compile_failed > 0) {
+    const regressions = regressed > 0 or compile_failed > 0;
+    if (regressions) {
         std.debug.print(
             \\
-            \\{d} spec(s) regressed, {d} of {d} sampled outputs do not compile.
+            \\{d} spec(s) regressed, {d} of {d} sampled outputs do not compile,
+            \\{d} could not be compiled at all.
             \\
             \\Re-record only if the change is intended:
             \\  zig build codegen-corpus-update
             \\
-        , .{ regressed, compile_failed, sample });
+        , .{ regressed, compile_failed, sample, could_not_run });
         return error.CodegenCorpusRegressed;
+    }
+    // Not a regression, and not a pass either: the gate did not see these.
+    const blind = could_not_run > 0;
+    if (blind) {
+        std.debug.print(
+            \\
+            \\{d} of {d} sampled outputs could not be compiled at all (COULD NOT RUN above).
+            \\That says nothing about the generated code; the compile check did not happen.
+            \\
+        , .{ could_not_run, sample });
+        return error.CompileSampleNotRun;
     }
 
     try out.print(
@@ -260,7 +273,19 @@ fn astCheckOk(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !bool {
     return std.mem.indexOf(u8, r.stderr, ": error: ") == null;
 }
 
-fn zigTestOk(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !bool {
+const TestOutcome = enum { compiled, does_not_compile, could_not_run };
+
+/// How many lines of the child's stderr a failure prints. zig puts the cause
+/// at the end; 40 lines hold an error with its notes and reference trace.
+const stderr_tail_lines = 40;
+
+/// `zig test` on one generated file, saying why when it fails (#871). Both
+/// failure paths used to discard the reason: a spawn error came back as "does
+/// not compile", and a real compile failure freed its stderr unprinted. The
+/// comment below records two false reports that hid exactly that way, and a
+/// third failure on main (phi_utils_multi, run 37225448222) could not be
+/// diagnosed from its log.
+fn zigTest(gpa: std.mem.Allocator, io: std.Io, zig_exe: []const u8, path: []const u8, label: []const u8) TestOutcome {
     const r = tri_proc.runIo(io, .{
         .allocator = gpa,
         // A SEPARATE cache dir. This tool runs inside `zig build`, which
@@ -278,19 +303,87 @@ fn zigTestOk(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !bool {
         //   `catch return false`, which reported it as "does not compile" for
         //   24 of 24 sampled specs -- every one of which compiles by hand.
         .argv = &.{
-            "zig",                "test",
+            zig_exe,              "test",
             "--cache-dir",        ".zig-cache/corpus-child",
             "--global-cache-dir", ".zig-cache/corpus-global",
             path,
         },
         .max_output_bytes = 512 * 1024,
-    }) catch return false;
+    }) catch |err| {
+        // The compiler never ran, or its output overflowed the cap. Neither
+        // says anything about the generated code, so it is counted apart.
+        std.debug.print("  COULD NOT RUN zig test: {s} ({s})\n", .{ label, @errorName(err) });
+        return .could_not_run;
+    };
     defer gpa.free(r.stdout);
     defer gpa.free(r.stderr);
-    return switch (r.term) {
+    const passed = switch (r.term) {
         .exited => |c| c == 0,
         else => false,
     };
+    if (passed) return .compiled;
+
+    std.debug.print("  DOES NOT COMPILE: {s} (ast-check passed it)\n", .{label});
+    switch (r.term) {
+        .exited => |c| std.debug.print("    zig test exited {d}; last lines of its stderr:\n", .{c}),
+        else => std.debug.print("    zig test ended by {s}; last lines of its stderr:\n", .{@tagName(r.term)}),
+    }
+    var lines = std.mem.splitScalar(u8, lastLines(r.stderr, stderr_tail_lines), '\n');
+    while (lines.next()) |line| std.debug.print("    | {s}\n", .{line});
+    return .does_not_compile;
+}
+
+/// The last `n` lines of `text`, trailing newlines dropped.
+fn lastLines(text: []const u8, n: usize) []const u8 {
+    const body = std.mem.trimEnd(u8, text, "\n");
+    const none = n == 0;
+    if (none) return body[body.len..];
+    var start: usize = body.len;
+    var seen: usize = 0;
+    while (start > 0) : (start -= 1) {
+        const at_break = body[start - 1] == '\n';
+        if (at_break) {
+            seen += 1;
+            const enough = seen == n;
+            if (enough) break;
+        }
+    }
+    return body[start..];
+}
+
+test "lastLines keeps the end, where zig puts the cause" {
+    const t = std.testing;
+    try t.expectEqualStrings("c\nd", lastLines("a\nb\nc\nd\n", 2));
+    try t.expectEqualStrings("a\nb", lastLines("a\nb\n\n", 5));
+    try t.expectEqualStrings("only", lastLines("only", 3));
+    try t.expectEqualStrings("", lastLines("a\nb\n", 0));
+    try t.expectEqualStrings("", lastLines("", 4));
+}
+
+test "a type error is DOES NOT COMPILE (positive control)" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "bad.zig", .data = "test { const x: u8 = \"no\"; _ = x; }\n" });
+    const path = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}/bad.zig", .{tmp.sub_path});
+    defer std.testing.allocator.free(path);
+    try std.testing.expectEqual(TestOutcome.does_not_compile, zigTest(std.testing.allocator, io, "zig", path, "bad.zig"));
+}
+
+test "a file that compiles is compiled" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "good.zig", .data = "test { const x: u8 = 3; _ = x; }\n" });
+    const path = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}/good.zig", .{tmp.sub_path});
+    defer std.testing.allocator.free(path);
+    try std.testing.expectEqual(TestOutcome.compiled, zigTest(std.testing.allocator, io, "zig", path, "good.zig"));
+}
+
+test "a missing compiler is COULD NOT RUN, not DOES NOT COMPILE (negative control)" {
+    const io = std.testing.io;
+    const got = zigTest(std.testing.allocator, io, "/nonexistent/x7-no-such-zig", "unused.zig", "unused.zig");
+    try std.testing.expectEqual(TestOutcome.could_not_run, got);
 }
 
 fn collectSpecs(gpa: std.mem.Allocator, io: std.Io, path: []const u8, acc: *std.ArrayList([]u8)) !void {
