@@ -1,7 +1,8 @@
 #include <WiFi.h>
 
-static const char* MY_SSID = "Kissmoon50/87_2.4GHz";
-static const char* MY_PASSPHRASE = "50875087";
+// Wi-Fi credentials live in secrets.h, which is gitignored.
+// Copy secrets.h.example to secrets.h and fill it in before flashing.
+#include "secrets.h"
 
 static const int TMS_PIN = 18;
 static const int TCK_PIN = 19;

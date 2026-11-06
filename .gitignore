@@ -437,3 +437,8 @@ fpga/codebook/__pycache__/
 
 # Phase-distribution dumps: regenerable from the checkpoints, tens of MB
 research/block/loguniform_x_*.npy
+
+# Local credentials - never commit (2026-10-05 leak cleanup)
+secrets.h
+.creds
+**/.creds
