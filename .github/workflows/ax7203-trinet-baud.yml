@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'fpga/vivado/trinet_node_v2_ax7203.v'
+      - 'fpga/portable/trinet_node_core.v'
       - 'fpga/openxc7-synth/trinet_siphash24.v'
       - '.github/workflows/ax7203-trinet-baud.yml'
 
@@ -51,9 +52,11 @@ jobs:
 
       - name: Yosys
         run: |
+          set -o pipefail
+          # tee-pipefail: no shell of its own; -nocarry is a yosys option, not bash -c
           mkdir -p build/${{ matrix.name }}
           docker run --rm -v "$PWD:/work" -w /work regymm/openxc7 yosys -p "
-            read_verilog fpga/openxc7-synth/trinet_siphash24.v fpga/vivado/trinet_node_v2_ax7203.v;
+            read_verilog fpga/openxc7-synth/trinet_siphash24.v fpga/portable/trinet_node_core.v fpga/vivado/trinet_node_v2_ax7203.v;
             chparam -set BAUD_DIV_P ${{ matrix.div }} trinet_node_v2_ax7203;
             synth_xilinx -flatten -abc9 -nocarry -nodsp -arch xc7 -top trinet_node_v2_ax7203;
             setundef -zero -params; write_json build/${{ matrix.name }}/node.json" 2>&1 | tee /tmp/yosys.log
@@ -97,6 +100,8 @@ jobs:
 
       - name: fasm2bit
         run: |
+          set -o pipefail
+          # tee-pipefail: the tee is in this shell; bash -c runs fasm2frames && xc7frames2bit with no pipe, and docker returns its status
           docker run --rm -v "$PWD:/work" -w /work regymm/openxc7 bash -c "
             source /prjxray/env/bin/activate && fasm2frames --db-root /nextpnr-xilinx/xilinx/external/prjxray-db/artix7 --part xc7a200tfbg484-2 /work/build/${{ matrix.name }}/node.fasm /work/build/${{ matrix.name }}/node.frames && /prjxray/build/tools/xc7frames2bit --part_file /nextpnr-xilinx/xilinx/external/prjxray-db/artix7/xc7a200tfbg484-2/part.yaml --part_name xc7a200tfbg484-2 --frm_file /work/build/${{ matrix.name }}/node.frames --output_file /work/build/${{ matrix.name }}/trinet_${{ matrix.name }}.bit"
           sha256sum build/${{ matrix.name }}/trinet_${{ matrix.name }}.bit | tee build/${{ matrix.name }}/trinet_${{ matrix.name }}.bit.sha256

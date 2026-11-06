@@ -49,8 +49,6 @@
 .github/workflows/ax7203-led-onehot.yml :: bitstream :: Yosys synthesis
 .github/workflows/ax7203-led-onehot.yml :: bitstream :: nextpnr place and route
 .github/workflows/ax7203-rx-echo-hb.yml :: bitstream :: Yosys synthesis
-.github/workflows/ax7203-trinet-baud.yml :: baud :: Yosys
-.github/workflows/ax7203-trinet-baud.yml :: baud :: fasm2bit
 .github/workflows/ax7203-trinet-dna-probe.yml :: bitstream :: Yosys
 .github/workflows/ax7203-trinet-dna-probe.yml :: bitstream :: fasm2bit
 .github/workflows/ax7203-trinet-dna-probe.yml :: golden :: DNA read sequence and framing (iverilog)
@@ -59,10 +57,6 @@
 .github/workflows/ax7203-trinet-mac32.yml :: bitstream :: Yosys
 .github/workflows/ax7203-trinet-mac32.yml :: bitstream :: fasm2bit
 .github/workflows/ax7203-trinet-mac32.yml :: golden :: RTL simulation vs golden vectors (iverilog)
-.github/workflows/ax7203-trinet-node-v2.yml :: bitstream :: Yosys
-.github/workflows/ax7203-trinet-node-v2.yml :: bitstream :: fasm2bit
-.github/workflows/ax7203-trinet-node-v2.yml :: golden :: Node v2 keyed receipts vs the Python golden (iverilog)
-.github/workflows/ax7203-trinet-node-v2.yml :: golden :: SipHash core vs the published vectors (iverilog)
 .github/workflows/ax7203-uart-loopback.yml :: bitstream :: Yosys synthesis
 .github/workflows/ax7203-uart-tx-probe.yml :: bitstream :: Yosys synthesis
 .github/workflows/bench007-probe-ax7203.yml :: bitstream :: fasm2frames + xc7frames2bit

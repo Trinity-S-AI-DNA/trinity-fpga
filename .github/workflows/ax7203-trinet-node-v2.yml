@@ -5,6 +5,7 @@ on:
     branches: [main, tri-net-ternary-internet]
     paths:
       - 'fpga/vivado/trinet_node_v2_ax7203.v'
+      - 'fpga/portable/trinet_node_core.v'
       - 'formal/trinet_node_v2_tb.v'
       - 'fpga/openxc7-synth/trinet_siphash24.v'
       - 'formal/trinet_siphash24_tb.v'
@@ -23,13 +24,15 @@ jobs:
         run: python3 conformance/trinet_mac32_conformance_ax7203.py --self-test
       - name: SipHash core vs the published vectors (iverilog)
         run: |
+          set -o pipefail
           sudo apt-get update -qq && sudo apt-get install -y -qq iverilog
           iverilog -g2012 -o /tmp/sh.vvp formal/trinet_siphash24_tb.v fpga/openxc7-synth/trinet_siphash24.v
           vvp /tmp/sh.vvp | tee /tmp/sh.log
           grep -q "TB PASS" /tmp/sh.log || { echo "::error::the SipHash core does not match the published vectors"; exit 1; }
       - name: Node v2 keyed receipts vs the Python golden (iverilog)
         run: |
-          iverilog -g2012 -o /tmp/v2.vvp formal/trinet_node_v2_tb.v fpga/vivado/trinet_node_v2_ax7203.v fpga/openxc7-synth/trinet_siphash24.v
+          set -o pipefail
+          iverilog -g2012 -o /tmp/v2.vvp formal/trinet_node_v2_tb.v fpga/vivado/trinet_node_v2_ax7203.v fpga/portable/trinet_node_core.v fpga/openxc7-synth/trinet_siphash24.v
           vvp /tmp/v2.vvp | tee /tmp/v2.log
           grep -q "TB PASS" /tmp/v2.log || { echo "::error::keyed receipts do not match the golden"; exit 1; }
 
@@ -48,9 +51,11 @@ jobs:
           docker image inspect regymm/openxc7:latest >/dev/null 2>&1 || { echo "::error::docker pull failed after 6 retries"; exit 1; }
       - name: Yosys
         run: |
+          set -o pipefail
+          # tee-pipefail: no shell of its own; -nocarry is a yosys option, not bash -c
           mkdir -p build/trinet_node_v2
           docker run --rm -v "$PWD:/work" -w /work regymm/openxc7 yosys -p "
-            read_verilog fpga/openxc7-synth/trinet_siphash24.v fpga/vivado/trinet_node_v2_ax7203.v;
+            read_verilog fpga/openxc7-synth/trinet_siphash24.v fpga/portable/trinet_node_core.v fpga/vivado/trinet_node_v2_ax7203.v;
             synth_xilinx -flatten -abc9 -nocarry -nodsp -arch xc7 -top trinet_node_v2_ax7203;
             setundef -zero -params; write_json build/trinet_node_v2/trinet_node_v2_ax7203.json" 2>&1 | tee /tmp/yosys.log
           grep -E "Estimated|ERROR" /tmp/yosys.log
@@ -94,6 +99,8 @@ jobs:
           echo "routed with placer/seed = $CLEAN"
       - name: fasm2bit
         run: |
+          set -o pipefail
+          # tee-pipefail: the tee is in this shell; bash -c runs fasm2frames && xc7frames2bit with no pipe, and docker returns its status
           docker run --rm -v "$PWD:/work" -w /work regymm/openxc7 bash -c "
             source /prjxray/env/bin/activate && fasm2frames --db-root /nextpnr-xilinx/xilinx/external/prjxray-db/artix7 --part xc7a200tfbg484-2 /work/build/trinet_node_v2/trinet_node_v2_ax7203.fasm /work/build/trinet_node_v2/trinet_node_v2_ax7203.frames && /prjxray/build/tools/xc7frames2bit --part_file /nextpnr-xilinx/xilinx/external/prjxray-db/artix7/xc7a200tfbg484-2/part.yaml --part_name xc7a200tfbg484-2 --frm_file /work/build/trinet_node_v2/trinet_node_v2_ax7203.frames --output_file /work/build/trinet_node_v2/trinet_node_v2_ax7203.bit"
           sha256sum build/trinet_node_v2/trinet_node_v2_ax7203.bit | tee build/trinet_node_v2/trinet_node_v2_ax7203.bit.sha256
