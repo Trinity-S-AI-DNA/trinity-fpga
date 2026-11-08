@@ -51,7 +51,7 @@ jobs:
         run: node --test .github/scripts/cache-prune.test.js
 
       - name: Prune
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         with:

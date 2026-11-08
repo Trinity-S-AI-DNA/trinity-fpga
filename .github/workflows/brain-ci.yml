@@ -139,7 +139,7 @@ jobs:
         # A comment is a courtesy, not a verdict: fork PRs get a read-only token
         # whatever this file asks for, and that must not fail the gate.
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const score = '${{ steps.health.outputs.HEALTH_SCORE }}';
@@ -339,7 +339,7 @@ jobs:
         # A comment is a courtesy, not a verdict: fork PRs get a read-only token
         # whatever this file asks for, and that must not fail the gate.
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const score = '${{ steps.stress.outputs.STRESS_SCORE }}';
@@ -539,7 +539,7 @@ jobs:
         # schedule context.issue.number is undefined and the call 404s.
         if: failure() && github.event_name == 'pull_request' && needs.detect-build.outputs.present == 'true'
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const body = `## 🚨 CRITICAL: Brain Health Below Threshold\n\n` +

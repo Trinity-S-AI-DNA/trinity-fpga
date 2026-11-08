@@ -55,7 +55,7 @@ jobs:
           fi
 
       - name: Reviewer-bee gate (APPROVED review + bee-reviewed after head)
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -108,7 +108,7 @@ jobs:
             core.info(`reviewer-bee gate passed: approved, bee-reviewed at ${labeledAt} >= head at ${headAt}`);
 
       - name: Wait for CI green
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -127,7 +127,7 @@ jobs:
             core.setFailed('G-81 falsified: CI did not green within 5 min');
 
       - name: Merge (squash) what the reviewer bee passed
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const pr = context.payload.pull_request;
