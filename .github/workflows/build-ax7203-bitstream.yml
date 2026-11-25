@@ -45,7 +45,7 @@ jobs:
             regymm/openxc7:latest bash -c '
             cd /github/fpga/openxc7-synth
             echo "=== Step 1: Yosys ==="
-            yosys -p "read_verilog gf_adder_param.v gf_mul_param.v gf_quire_param.v gf16_plus_mac.v ${DESIGN}.v; synth_xilinx -flatten -abc9 -nocarry -nodsp -arch xc7; write_json ${DESIGN}.json" || exit 1
+            yosys -p "read_verilog gf_adder_param.v gf_mul_param.v gf_quire_param.v gf16_plus_mac.v fpga_wasm_board.v ${DESIGN}.v; synth_xilinx -flatten -abc9 -nocarry -nodsp -arch xc7; write_json ${DESIGN}.json" || exit 1
             echo "=== Step 2: nextpnr ==="
             cp /github/chipdb-xc7a200tfbg484-2.bin /chipdb/xc7a200tfbg484-2.bin
             nextpnr-xilinx --chipdb /chipdb/xc7a200tfbg484-2.bin \
