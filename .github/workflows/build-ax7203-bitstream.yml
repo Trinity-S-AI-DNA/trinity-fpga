@@ -35,7 +35,8 @@ jobs:
             --bba /tmp/chipdb.bba &&
           bbasm --le /tmp/chipdb.bba /github/chipdb-xc7a200tfbg484-2.bin'
 
-      - name: Full bitstream build
+      - name: Yosys synthesis (30 min timeout)
+        timeout-minutes: 30
         run: |
           DESIGN="${{ github.event.inputs.design }}"
           echo "Building $DESIGN..."
@@ -46,32 +47,42 @@ jobs:
             cd /github/fpga/openxc7-synth
             echo "=== Step 1: Yosys ==="
             yosys -p "read_verilog gf_adder_param.v gf_mul_param.v gf_quire_param.v gf16_plus_mac.v fpga_wasm_board.v ${DESIGN}.v; synth_xilinx -flatten -abc9 -nocarry -nodsp -arch xc7; write_json ${DESIGN}.json" || exit 1
-            echo "=== Step 2: nextpnr ==="
-            cp /github/chipdb-xc7a200tfbg484-2.bin /chipdb/xc7a200tfbg484-2.bin
-            nextpnr-xilinx --chipdb /chipdb/xc7a200tfbg484-2.bin \
-              --json ${DESIGN}.json \
-              --xdc ax7203_corona.xdc \
-              --fasm ${DESIGN}.fasm \
-              --router router1 \
-              --timing-allow-fail \
-              --freq 10.0 || exit 1
-            echo "FASM lines: $(wc -l < ${DESIGN}.fasm)"
-            echo "=== Step 3: fasm2frames ==="
-            /prjxray/env/bin/fasm2frames \
-              --db-root /nextpnr-xilinx/xilinx/external/prjxray-db/artix7 \
-              --part xc7a200tfbg484-2 \
-              ${DESIGN}.fasm ${DESIGN}.frames 2>/dev/null
-            echo "fasm2frames done, frames lines: $(wc -l < ${DESIGN}.frames)"
-            [ -s ${DESIGN}.frames ] || exit 1
-            echo "=== Step 4: xc7frames2bit ==="
-            xc7frames2bit \
-              --part_file /nextpnr-xilinx/xilinx/external/prjxray-db/artix7/xc7a200tfbg484-2/part.yaml \
-              --frm_file ${DESIGN}.frames \
-              --output_file ${DESIGN}.bit
-            echo "xc7frames2bit rc=$?"
-            ls -la ${DESIGN}.bit || exit 1
-            echo "=== BITSTREAM DONE ==="
+            echo "Yosys synthesis done"
             '
+      
+      - name: NextpnR place-and-route (15 min timeout)
+        timeout-minutes: 15
+        run: |
+          DESIGN="${{ github.event.inputs.design }}"
+          cp /github/chipdb-xc7a200tfbg484-2.bin /chipdb/xc7a200tfbg484-2.bin
+          nextpnr-xilinx --chipdb /chipdb/xc7a200tfbg484-2.bin \
+            --json ${DESIGN}.json \
+            --xdc ax7203_corona.xdc \
+            --fasm ${DESIGN}.fasm \
+            --router router1 \
+            --timing-allow-fail \
+            --freq 10.0 || exit 1
+          echo "FASM lines: $(wc -l < ${DESIGN}.fasm)"
+
+      - name: fasm2frames (10 min timeout)
+        timeout-minutes: 10
+        run: |
+          /prjxray/env/bin/fasm2frames \
+            --db-root /nextpnr-xilinx/xilinx/external/prjxray-db/artix7 \
+            --part xc7a200tfbg484-2 \
+            ${DESIGN}.fasm ${DESIGN}.frames 2>/dev/null
+          echo "fasm2frames done, frames lines: $(wc -l < ${DESIGN}.frames)"
+          [ -s ${DESIGN}.frames ] || exit 1
+
+      - name: xc7frames2bit (10 min timeout)
+        timeout-minutes: 10
+        run: |
+          xc7frames2bit \
+            --part_file /nextpnr-xilinx/xilinx/external/prjxray-db/artix7/xc7a200tfbg484-2/part.yaml \
+            --frm_file ${DESIGN}.frames \
+            --output_file ${DESIGN}.bit
+          echo "xc7frames2bit rc=$?"
+          ls -la ${DESIGN}.bit || exit 1
 
       - name: Upload FASM + JSON (debug)
         if: always()
